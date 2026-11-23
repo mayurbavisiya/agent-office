@@ -1,0 +1,1 @@
+{"agentType":"Explore","isBuiltIn":true,"description":"List files in scratchpad ao folder","toolUseId":"toolu_01EpcGxktHBWeXedkF2WLtDu","parentAgentId":"a9f22c4a50884571c","spawnDepth":2,"requestShape":"foreground","requestNonInteractive":true,"model":"claude-haiku-5-5","pickedEffortModel":"claude-haiku-5-5","finished":true}

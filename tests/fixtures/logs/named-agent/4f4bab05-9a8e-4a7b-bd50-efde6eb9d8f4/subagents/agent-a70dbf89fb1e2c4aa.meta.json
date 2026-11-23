@@ -1,0 +1,1 @@
+{"agentType":"general-purpose","isBuiltIn":true,"description":"List files in scratchpad folder","name":"helper","toolUseId":"toolu_01N7yvEJuFvUzZ72RZBr6kNM","spawnDepth":1,"requestShape":"foreground","requestNonInteractive":true,"model":"haiku","pickedEffortModel":"claude-haiku-5-5","finished":true}

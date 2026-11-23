@@ -1,0 +1,5 @@
+{
+  "name": "agent-office",
+  "version": "0.1.0",
+  "description": "Forwards Claude Code hook events to the Agent Office app"
+}

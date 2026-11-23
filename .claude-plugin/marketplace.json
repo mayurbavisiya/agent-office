@@ -1,0 +1,7 @@
+{
+  "name": "agent-office",
+  "owner": { "name": "agent-office" },
+  "plugins": [
+    { "name": "agent-office", "source": "./plugin", "description": "Visualize Claude Code agents as an animated office" }
+  ]
+}
