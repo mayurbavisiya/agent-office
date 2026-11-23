@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { layoutRooms, roomLayout, handoffTarget, assignSeats, visibleSessions, MIN_ROOM_W, MIN_ROOM_H } from '../src/scene/layout.js';
+import { layoutRooms, roomLayout, handoffTarget, assignSeats, visibleSessions, signText, roomTitle, MIN_ROOM_W, MIN_ROOM_H } from '../src/scene/layout.js';
 import type { Agent, Session } from '../src/shared/types.js';
 
 const stats = () => ({ inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, tools: {}, files: [], recent: [], lastActivity: 0 });
@@ -199,5 +199,23 @@ describe('roomLayout', () => {
     expect(toParent.x).toBeGreaterThan(l.seats.p.x);
     expect(Math.abs(toBoss.y - l.boss.y)).toBeLessThan(1);
     expect(toBoss.x).toBeGreaterThan(l.boss.x);
+  });
+});
+
+describe('room sign', () => {
+  it('room label prefers the session name', () => {
+    const s = { ...session([]), branch: 'main' };
+    expect(roomTitle(s)).toBe('proj');
+    expect(signText(s, 600, '')).toEqual({ label: 'proj', sub: '', branch: '  ⎇ main' });
+    const named = { ...s, name: 'crm-brainstorm', subLabel: 'abc123' };
+    expect(roomTitle(named)).toBe('crm-brainstorm');
+    expect(signText(named, 600, '')).toEqual({ label: 'crm-brainstorm', sub: ' · abc123', branch: '  ⎇ main' });
+  });
+
+  it('cuts a long sign to the room width', () => {
+    const s = { ...session([]), name: 'a-very-long-session-name-that-goes-on', branch: 'feature/some-long-branch-name' };
+    const t = signText(s, 320, '  · 2 agents');
+    expect(t.label.length + t.sub.length + t.branch.length).toBeLessThanOrEqual(Math.floor((320 - 40) / 6.6) - 12);
+    expect(t.branch).toContain('⎇');
   });
 });

@@ -43,6 +43,8 @@ type SessionMeta = {
   pending: PendingSpawn[];
   /** agents pruned from state; late events for them are ignored rather than recreating them */
   retired: Set<string>;
+  /** last time the process was seen alive (session registry); the idle timeout counts from here too */
+  liveAt?: number;
 };
 
 type TeammateLink = { leadSessionId: string; agentId: string };
@@ -89,6 +91,7 @@ type SessionInput = 'revive' | 'end' | 'tick';
 type SessionResult = 'session_started' | 'session_ended' | 'prune' | null;
 
 function transitionSession(s: Session, m: SessionMeta, input: SessionInput, now: number, endedMs: number): SessionResult {
+  const lastSeen = Math.max(s.lastActivity, m.liveAt ?? 0);
   switch (input) {
     case 'revive':
       if (s.status !== 'ended') return null;
@@ -103,7 +106,7 @@ function transitionSession(s: Session, m: SessionMeta, input: SessionInput, now:
       transitionBoss(s, m, 'reset');
       return 'session_ended';
     case 'tick':
-      if (s.status === 'active' && now - s.lastActivity >= endedMs) return transitionSession(s, m, 'end', now, endedMs);
+      if (s.status === 'active' && now - lastSeen >= endedMs) return transitionSession(s, m, 'end', now, endedMs);
       if (s.status === 'ended' && now - (m.endedAt ?? now) >= LINGER_MS) return 'prune';
       return null;
   }
@@ -226,6 +229,21 @@ export class OfficeStore {
     }
     this.notify(out);
     return out;
+  }
+
+  /** Sets the session's registry name; notifies only on change. */
+  setName(sessionId: string, name: string | undefined): void {
+    const s = this.sessions[sessionId];
+    if (!s || (name ?? undefined) === s.name) return;
+    if (name) s.name = name;
+    else delete s.name;
+    this.notify([]);
+  }
+
+  /** The session's process is alive now (session registry): an active session is not timed out while live. */
+  markLive(sessionId: string, now: number): void {
+    const m = this.meta.get(sessionId);
+    if (m && Number.isFinite(now)) m.liveAt = now;
   }
 
   applyLog(sessionId: string, agentId: string | null, d: LogDelta, now: number): void {
@@ -394,6 +412,8 @@ export class OfficeStore {
           const existing = s.agents[agentId];
           if (existing) {
             if (type && existing.type === 'unknown') existing.type = type;
+            const task = str(e.description);
+            if (task && !existing.task) existing.task = task;
           } else {
             this.ensureAgent(s, m, agentId, now, out, { status: 'spawning', type, task: str(e.description), claim: true });
           }

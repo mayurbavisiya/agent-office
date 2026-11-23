@@ -91,6 +91,54 @@ describe('discoverActiveSessions', () => {
     expect(discoverActiveSessions(join(tmpdir(), 'nope-' + NOW), NOW)).toEqual([]);
   });
 
+  it('discovery lists every live registry session regardless of log age', () => {
+    root = mkdtempSync(join(tmpdir(), 'disc-'));
+    const old = new Date(NOW - 2 * 86_400_000);
+    const mk = (slug: string, sid: string, cwd: string) => {
+      const proj = join(root, 'projects', slug);
+      mkdirSync(join(proj, sid, 'subagents'), { recursive: true });
+      const log = join(proj, `${sid}.jsonl`);
+      writeFileSync(log, JSON.stringify({ type: 'user', cwd }) + '\n');
+      utimesSync(log, old, old);
+      return log;
+    };
+    const logA = mk('-w-alpha', 'sid-a', '/w/alpha');
+    mk('other-slug', 'sid-b', '/w/beta');
+    writeFileSync(join(root, 'projects', 'other-slug', 'sid-b', 'subagents', 'agent-x1.jsonl'), '{}\n');
+    const reg = join(root, 'sessions');
+    mkdirSync(reg);
+    writeFileSync(join(reg, `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: 'sid-a', cwd: '/w/alpha', kind: 'interactive', name: 'alpha-work', status: 'busy' }));
+    writeFileSync(join(reg, `${process.ppid}.json`), JSON.stringify({ pid: process.ppid, sessionId: 'sid-b', cwd: '/w/beta', name: 'beta-work', status: 'idle' }));
+    writeFileSync(join(reg, '999999.json'), JSON.stringify({ pid: 999999, sessionId: 'sid-dead', cwd: '/w/dead', kind: 'interactive' }));
+    writeFileSync(join(reg, '1.json'), '{garbage');
+    writeFileSync(join(reg, '999999.abc.key'), 'never read');
+    const r = discoverActiveSessions(root, NOW).sort((a, b) => a.sessionId.localeCompare(b.sessionId));
+    expect(r.map((s) => s.sessionId)).toEqual(['sid-a', 'sid-b']);
+    expect(r[0]).toMatchObject({ name: 'alpha-work', registryStatus: 'busy', cwd: '/w/alpha', mainLog: logA, pid: process.pid });
+    expect(r[1]).toMatchObject({ name: 'beta-work', registryStatus: 'idle', cwd: '/w/beta', pid: process.ppid });
+    expect(r[1].subagentLogs.map((a) => a.agentId)).toEqual(['x1']);
+  });
+
+  it('discovery skips non-interactive kinds and a pid whose start time does not match procStart', () => {
+    root = mkdtempSync(join(tmpdir(), 'disc-'));
+    mkdirSync(join(root, 'projects'), { recursive: true });
+    const reg = join(root, 'sessions');
+    mkdirSync(reg);
+    writeFileSync(join(reg, 'a.json'), JSON.stringify({ pid: process.pid, sessionId: 'sid-bg', kind: 'background' }));
+    writeFileSync(join(reg, 'b.json'), JSON.stringify({ pid: process.ppid, sessionId: 'sid-reused', procStart: 'Thu Jan  1 00:00:00 1970' }));
+    expect(discoverActiveSessions(root, NOW)).toEqual([]);
+  });
+
+  it('discovery falls back to the mtime window when there is no sessions dir', () => {
+    const r = discoverActiveSessions(build(), NOW);
+    expect(r.map((s) => s.sessionId)).toEqual([S1]);
+    expect(r[0].name).toBeUndefined();
+    // an empty sessions dir (no readable entries) also falls back
+    mkdirSync(join(root, 'sessions'));
+    writeFileSync(join(root, 'sessions', 'x.json'), 'nope');
+    expect(discoverActiveSessions(root, NOW).map((s) => s.sessionId)).toEqual([S1]);
+  });
+
   it('subagentLogPath derives from the transcript path', () => {
     expect(subagentLogPath('/c', '/c/projects/p/abc.jsonl', 'zz')).toBe('/c/projects/p/abc/subagents/agent-zz.jsonl');
   });

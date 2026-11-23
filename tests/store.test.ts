@@ -597,3 +597,45 @@ describe('applyLog session metadata', () => {
     expect(sess.cwd).toBe('/work/proj');
   });
 });
+
+describe('registry helpers', () => {
+  const start = (s: OfficeStore, t: number) => s.applyHook({ hook_event_name: 'SessionStart', source: 'discovered', session_id: 'R1', cwd: '/w/r' }, t);
+
+  it('markLive keeps a live session from timing out; it ends endedMs after the last live mark', () => {
+    const s = new OfficeStore({ endedMs: 1000 });
+    start(s, 0);
+    s.markLive('R1', 900);
+    s.tick(1500);
+    expect(s.snapshot().sessions.R1.status).toBe('active');
+    s.tick(1900);
+    expect(s.snapshot().sessions.R1.status).toBe('ended');
+  });
+
+  it('setName sets, changes and clears the session name', () => {
+    const s = new OfficeStore();
+    start(s, 0);
+    let n = 0;
+    s.onChange(() => n++);
+    s.setName('R1', 'alpha');
+    s.setName('R1', 'alpha');
+    expect(s.snapshot().sessions.R1.name).toBe('alpha');
+    expect(n).toBe(1);
+    s.setName('R1', undefined);
+    expect(s.snapshot().sessions.R1.name).toBeUndefined();
+    s.setName('nope', 'x');
+    expect(s.snapshot().sessions.nope).toBeUndefined();
+  });
+
+  it('a repeated SubagentStart fills a missing task without a second spawn', () => {
+    const s = new OfficeStore();
+    start(s, 0);
+    const ev: OfficeEvent[] = [];
+    s.onChange((e) => ev.push(...e));
+    s.applyHook({ hook_event_name: 'SubagentStart', session_id: 'R1', agent_id: 'a' }, 1);
+    s.applyHook({ hook_event_name: 'SubagentStart', session_id: 'R1', agent_id: 'a', agent_type: 'Explore', description: 'look around' }, 2);
+    const a = s.snapshot().sessions.R1.agents.a;
+    expect(a.type).toBe('Explore');
+    expect(a.task).toBe('look around');
+    expect(ev.filter((e) => e.kind === 'spawned')).toHaveLength(1);
+  });
+});

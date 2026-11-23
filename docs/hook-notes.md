@@ -129,3 +129,24 @@ Headless mode cannot produce these; check them in an interactive session in the 
 ## Subagent `meta.json` (discovery)
 `agent-<id>.meta.json` always carried `finished` (true) in every fixture, so discovery uses it alone: `finished === true` skips the log;
 a missing or unreadable file or field means assume running. `tool_result` in the main log is not parsed for this.
+
+## Session registry (internal, undocumented; verified on Claude Code 2.1.323–2.1.327)
+
+Like the logs, this is Claude Code's private on-disk state and may change without notice; parse
+every field as optional and tolerate garbage.
+
+- `$CLAUDE_DIR/sessions/<pid>.json` exists for every running interactive session. Next to it is a
+  `<pid>.<hash>.key` file: never read it.
+- Fields used: `pid`, `sessionId` (the CURRENT id; after `/clear` it changes and
+  `formerNames[].sessionId` keeps the old ones), `cwd`, `name` (shown as the room title), `status`
+  (`busy`/`idle`, may be missing), `kind` (only `interactive` or missing counts), `procStart`.
+- Files of exited processes can linger: the pid must be alive (`kill(pid, 0)`; EPERM = alive).
+- `procStart` is `ps -o lstart` format **in UTC** (e.g. `Fri Nov 13 06:40:01 2026`), not local time:
+  compare with `TZ=UTC ps -o lstart= -p <pid>` (local time is also accepted). A mismatch = reused pid.
+- The main log is `$CLAUDE_DIR/projects/<slug>/<sessionId>.jsonl`; the slug is normally the cwd with
+  every non-alphanumeric char replaced by `-`, but the app searches all project dirs as a fallback.
+- The app (src/core/discovery.ts, app.ts) shows every live entry and rescans every 3 s: new
+  sessions, `/clear` (same pid, new id → SessionEnd(clear) then SessionStart(clear) = shift change),
+  exited pids, new/finished subagents (from `subagents/` + `meta.json`), and, for sessions that never
+  sent a hook, `status` idle↔busy as Stop/UserPromptSubmit. Without the dir it falls back to the
+  10-minute log mtime window.

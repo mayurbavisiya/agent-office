@@ -84,6 +84,8 @@ export type Session = {
   label: string;
   /** title or short id when same folder */
   subLabel?: string;
+  /** session name from Claude Code's session registry (shown on the room sign instead of label) */
+  name?: string;
   branch?: string;
   status: 'active' | 'ended';
   boss: { status: BossStatus; startedAt: number; stats: AgentStats };

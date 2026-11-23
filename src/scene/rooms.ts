@@ -1,7 +1,7 @@
 // One room per session: a scaled-down office (wall, window, clock, whiteboard, door, the boss's
 // glass corner, desks) ported from the approved mockup. Browser-only.
 import type { Agent, AgentStats, Session } from '../shared/types.js';
-import { HEAD_TOP, roomLayout, SIGN_H, TAG_H, type Rect, type RoomLayout } from './layout.js';
+import { HEAD_TOP, roomLayout, SIGN_H, signText, TAG_H, type Rect, type RoomLayout } from './layout.js';
 import { agentLook, bossLook, looksFor, totalTokens, truncate } from './looks.js';
 import { formatTokens, hasUsage } from './panel.js';
 import { renderCharacter, renderDesk, setDeskScreen, svgEl, updateCharacter, type CharacterOpts } from './characters.js';
@@ -192,16 +192,7 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
 
   // sign: label · subLabel ⎇ branch, cut to the room width
   const count = l.order.length ? `  · ${l.order.length} agent${l.order.length === 1 ? '' : 's'}` : '';
-  const maxChars = Math.max(10, Math.floor((rect.w - 40) / 6.6) - count.length);
-  let label = session.label;
-  let sub = session.subLabel ? ` · ${session.subLabel}` : '';
-  let branch = session.branch ? `  ⎇ ${session.branch}` : '';
-  if (label.length + sub.length + branch.length > maxChars) {
-    label = truncate(label, Math.max(8, Math.floor(maxChars * 0.45)));
-    const rest = maxChars - label.length;
-    sub = sub ? truncate(sub, Math.max(6, Math.floor(rest * 0.45))) : '';
-    branch = branch ? truncate(branch, Math.max(6, rest - sub.length)) : '';
-  }
+  const { label, sub, branch } = signText(session, rect.w, count);
   const sign = inner.querySelector<SVGGElement>(':scope > .sign')!;
   const setT = (cls: string, v: string) => {
     const t = sign.querySelector(`.${cls}`)!;

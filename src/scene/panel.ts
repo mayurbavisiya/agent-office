@@ -3,6 +3,7 @@
 import type { Agent, AgentStats, AgentStatus, BossStatus, OfficeState, Session } from '../shared/types.js';
 import { estimateCost } from '../core/pricing.js';
 import { looksFor } from './looks.js';
+import { roomTitle } from './layout.js';
 
 const DASH = '—';
 
@@ -111,7 +112,7 @@ export function panelModel(target: PanelTarget, now: number): PanelModel | null 
   return {
     name: isBoss ? 'Main agent' : (agent!.name ?? agent!.type),
     type,
-    task: isBoss ? [session.label, session.subLabel].filter(Boolean).join(' · ') : (agent!.task ?? ''),
+    task: isBoss ? [roomTitle(session), session.subLabel].filter(Boolean).join(' · ') : (agent!.task ?? ''),
     color: looksFor(type).color,
     statusLabel,
     statusColor,

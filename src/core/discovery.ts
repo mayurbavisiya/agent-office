@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import { basename, dirname, join } from 'node:path';
@@ -15,8 +16,25 @@ export type DiscoveredSubagent = {
 export type DiscoveredSession = {
   sessionId: string;
   cwd?: string;
+  /** '' when a registry session's log was not found (yet) */
   mainLog: string;
   subagentLogs: DiscoveredSubagent[];
+  /** from the session registry (docs/hook-notes.md "Session registry"); absent in the mtime fallback */
+  pid?: number;
+  name?: string;
+  registryStatus?: 'busy' | 'idle';
+  /** earlier session ids of the same process (formerNames[].sessionId), e.g. before /clear */
+  formerSessionIds?: string[];
+};
+
+/** One live `$CLAUDE_DIR/sessions/<pid>.json` entry. Internal/undocumented format: every field optional. */
+export type RegistryEntry = {
+  pid: number;
+  sessionId: string;
+  cwd?: string;
+  name?: string;
+  status?: 'busy' | 'idle';
+  formerSessionIds: string[];
 };
 
 /** `<session-dir>/subagents/agent-<agentId>.jsonl`, where session-dir is the transcript path without `.jsonl`. */
@@ -25,12 +43,13 @@ export function subagentLogPath(_claudeDir: string, transcriptPath: string, agen
   return join(sessionDir, 'subagents', `agent-${agentId}.jsonl`);
 }
 
-/** Reads the sibling `agent-<id>.meta.json`; never throws. */
-function readMeta(logPath: string): Omit<DiscoveredSubagent, 'agentId' | 'path'> {
-  const out: Omit<DiscoveredSubagent, 'agentId' | 'path'> = { finished: false };
+/** Reads the sibling `agent-<id>.meta.json`; never throws. `hasMeta`: the file was read and parsed. */
+export function readMeta(logPath: string): Omit<DiscoveredSubagent, 'agentId' | 'path'> & { hasMeta?: boolean } {
+  const out: Omit<DiscoveredSubagent, 'agentId' | 'path'> & { hasMeta?: boolean } = { finished: false };
   try {
     const o: unknown = JSON.parse(readFileSync(logPath.replace(/\.jsonl$/, '.meta.json'), 'utf8'));
     if (typeof o !== 'object' || o === null) return out;
+    out.hasMeta = true;
     const m = o as Record<string, unknown>;
     out.finished = m.finished === true;
     if (typeof m.agentType === 'string') out.type = m.agentType;
@@ -49,6 +68,134 @@ const safeReaddir = (p: string): string[] => {
     return [];
   }
 };
+
+/** `agent-<id>.jsonl` file names in `<session-dir>/subagents` (no meta read). */
+export function listSubagentFiles(mainLog: string): Array<{ agentId: string; path: string }> {
+  const subDir = join(dirname(mainLog), basename(mainLog).replace(/\.jsonl$/, ''), 'subagents');
+  return safeReaddir(subDir)
+    .map((f) => /^agent-(.+)\.jsonl$/.exec(f))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => ({ agentId: m[1], path: join(subDir, m[0]) }));
+}
+
+const subagentsOf = (mainLog: string): DiscoveredSubagent[] =>
+  listSubagentFiles(mainLog).map((a) => {
+    const { hasMeta: _h, ...meta } = readMeta(a.path);
+    return { ...a, ...meta };
+  });
+
+/** True when the pid exists (EPERM: exists but owned by someone else). */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+const startCache = new Map<string, boolean>();
+const norm = (s: string) => s.trim().replace(/\s+/g, ' ');
+function psStart(pid: number, tz?: string): string | undefined {
+  try {
+    const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C' };
+    if (tz) env.TZ = tz;
+    const out = norm(execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { env, timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).toString());
+    return out || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * PID-reuse guard: does the process's start time match the registry's `procStart`? Claude Code writes
+ * procStart in UTC (`ps -o lstart` format); local time is accepted too. If ps fails, the pid check is trusted.
+ * Cached per pid+procStart for the process lifetime.
+ */
+export function procStartMatches(pid: number, procStart: string): boolean {
+  const key = `${pid}|${procStart}`;
+  const hit = startCache.get(key);
+  if (hit !== undefined) return hit;
+  const want = norm(procStart);
+  const utc = psStart(pid, 'UTC');
+  let ok: boolean;
+  if (utc === undefined) ok = true;
+  else ok = utc === want || psStart(pid) === want;
+  startCache.set(key, ok);
+  return ok;
+}
+
+/**
+ * Live interactive entries of `$CLAUDE_DIR/sessions/*.json` (never the `.key` files).
+ * Returns null when the dir is missing or has no readable entries (callers then fall back to the mtime scan).
+ */
+export function readRegistry(claudeDir: string): RegistryEntry[] | null {
+  const dir = join(claudeDir, 'sessions');
+  let readable = 0;
+  const out: RegistryEntry[] = [];
+  for (const f of safeReaddir(dir)) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const o: unknown = JSON.parse(readFileSync(join(dir, f), 'utf8'));
+      if (typeof o !== 'object' || o === null || Array.isArray(o)) continue;
+      const m = o as Record<string, unknown>;
+      const pid = m.pid;
+      const sessionId = m.sessionId;
+      if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0 || typeof sessionId !== 'string' || !sessionId) continue;
+      readable++;
+      if (m.kind !== undefined && m.kind !== 'interactive') continue;
+      if (!pidAlive(pid)) continue;
+      if (typeof m.procStart === 'string' && m.procStart && !procStartMatches(pid, m.procStart)) continue;
+      const e: RegistryEntry = { pid, sessionId, formerSessionIds: [] };
+      if (typeof m.cwd === 'string' && m.cwd) e.cwd = m.cwd;
+      if (typeof m.name === 'string' && m.name) e.name = m.name;
+      if (m.status === 'busy' || m.status === 'idle') e.status = m.status;
+      if (Array.isArray(m.formerNames)) {
+        for (const fn of m.formerNames as unknown[]) {
+          const id = typeof fn === 'object' && fn !== null ? (fn as { sessionId?: unknown }).sessionId : undefined;
+          if (typeof id === 'string' && id && id !== sessionId) e.formerSessionIds.push(id);
+        }
+      }
+      out.push(e);
+    } catch {
+      // unreadable or garbage: skip
+    }
+  }
+  return readable ? out : null;
+}
+
+/** `<sessionId>.jsonl` in any project dir; tries the slug derived from cwd first. */
+export function findMainLog(claudeDir: string, sessionId: string, cwd?: string): string | undefined {
+  const projects = join(claudeDir, 'projects');
+  const file = `${sessionId}.jsonl`;
+  const isFile = (p: string) => {
+    try {
+      return statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (cwd) {
+    const p = join(projects, cwd.replace(/[^a-zA-Z0-9]/g, '-'), file);
+    if (isFile(p)) return p;
+  }
+  for (const slug of safeReaddir(projects)) {
+    const p = join(projects, slug, file);
+    if (isFile(p)) return p;
+  }
+  return undefined;
+}
+
+/** A DiscoveredSession for a registry entry (log located, subagents listed with their meta). */
+export function sessionFromRegistry(claudeDir: string, r: RegistryEntry): DiscoveredSession {
+  const mainLog = findMainLog(claudeDir, r.sessionId, r.cwd) ?? '';
+  const s: DiscoveredSession = { sessionId: r.sessionId, mainLog, subagentLogs: mainLog ? subagentsOf(mainLog) : [], pid: r.pid, formerSessionIds: r.formerSessionIds };
+  const cwd = r.cwd ?? (mainLog ? findCwd(mainLog) : undefined);
+  if (cwd) s.cwd = cwd;
+  if (r.name) s.name = r.name;
+  if (r.status) s.registryStatus = r.status;
+  return s;
+}
 
 /** First top-level `cwd` in the file; reads 64 KB blocks only until one is found (bounded at 1 MB). */
 function findCwd(file: string): string | undefined {
@@ -91,8 +238,27 @@ function findCwd(file: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Every running session: from the session registry when it exists (all live interactive entries, whatever
+ * their log age), else main logs modified within `windowMs`.
+ */
 export function discoverActiveSessions(claudeDir: string, now: number, windowMs = 600_000): DiscoveredSession[] {
-  const out: DiscoveredSession[] = [];
+  const reg = readRegistry(claudeDir);
+  if (reg) return reg.map((r) => sessionFromRegistry(claudeDir, r));
+  return recentMainLogs(claudeDir, now, windowMs).map((l) => sessionFromLog(l.sessionId, l.mainLog));
+}
+
+/** A DiscoveredSession for a main log found by the mtime scan. */
+export function sessionFromLog(sessionId: string, mainLog: string): DiscoveredSession {
+  const s: DiscoveredSession = { sessionId, mainLog, subagentLogs: subagentsOf(mainLog) };
+  const cwd = findCwd(mainLog);
+  if (cwd) s.cwd = cwd;
+  return s;
+}
+
+/** Main logs whose mtime is within windowMs (stat only). */
+export function recentMainLogs(claudeDir: string, now: number, windowMs = 600_000): Array<{ sessionId: string; mainLog: string }> {
+  const out: Array<{ sessionId: string; mainLog: string }> = [];
   const projects = join(claudeDir, 'projects');
   for (const slug of safeReaddir(projects)) {
     const projDir = join(projects, slug);
@@ -105,16 +271,7 @@ export function discoverActiveSessions(claudeDir: string, now: number, windowMs 
       } catch {
         continue;
       }
-      const sessionId = name.slice(0, -'.jsonl'.length);
-      const subDir = join(projDir, sessionId, 'subagents');
-      const subagentLogs = safeReaddir(subDir)
-        .map((f) => /^agent-(.+)\.jsonl$/.exec(f))
-        .filter((m): m is RegExpExecArray => m !== null)
-        .map((m) => ({ agentId: m[1], path: join(subDir, m[0]), ...readMeta(join(subDir, m[0])) }));
-      const s: DiscoveredSession = { sessionId, mainLog, subagentLogs };
-      const cwd = findCwd(mainLog);
-      if (cwd) s.cwd = cwd;
-      out.push(s);
+      out.push({ sessionId: name.slice(0, -'.jsonl'.length), mainLog });
     }
   }
   return out;

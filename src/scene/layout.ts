@@ -1,5 +1,26 @@
 // Pure, DOM-free geometry for the office floor and room interiors (tested under node).
 import type { Agent, Session } from '../shared/types.js';
+import { truncate } from './looks.js';
+
+/** The room's title: the registry session name when known, else the folder label. */
+export function roomTitle(s: Pick<Session, 'label' | 'name'>): string {
+  return s.name || s.label;
+}
+
+/** Sign text parts (title · subLabel ⎇ branch), cut to fit a room `roomW` wide next to `count`. */
+export function signText(s: Pick<Session, 'label' | 'name' | 'subLabel' | 'branch'>, roomW: number, count: string): { label: string; sub: string; branch: string } {
+  const maxChars = Math.max(10, Math.floor((roomW - 40) / 6.6) - count.length);
+  let label = roomTitle(s);
+  let sub = s.subLabel ? ` · ${s.subLabel}` : '';
+  let branch = s.branch ? `  ⎇ ${s.branch}` : '';
+  if (label.length + sub.length + branch.length > maxChars) {
+    label = truncate(label, Math.max(8, Math.floor(maxChars * 0.45)));
+    const rest = maxChars - label.length;
+    sub = sub ? truncate(sub, Math.max(6, Math.floor(rest * 0.45))) : '';
+    branch = branch ? truncate(branch, Math.max(6, rest - sub.length)) : '';
+  }
+  return { label, sub, branch };
+}
 
 export type Rect = { x: number; y: number; w: number; h: number };
 export type Point = { x: number; y: number };

@@ -9,6 +9,7 @@ import { bossLook, looksFor } from './looks.js';
 import { renderCharacter } from './characters.js';
 import type { OfficeState } from '../shared/types.js';
 import { animStats, planAnimations, ROOM_FADED_EVENT, runAnimations } from './animator.js';
+import { roomTitle } from './layout.js';
 
 const viewport = document.getElementById('floor') as HTMLElement;
 const svg = document.getElementById('office') as unknown as SVGSVGElement;
@@ -117,7 +118,7 @@ function renderStrip(state: OfficeState): void {
     const working = workingCount(s);
     return { s, working, need: s.boss.status === 'needs_you' ? 1 : 0, total: agents.length + 1 };
   });
-  const sig = JSON.stringify(info.map((i) => [i.s.id, i.s.label, i.s.boss.status, i.working, i.need]));
+  const sig = JSON.stringify(info.map((i) => [i.s.id, roomTitle(i.s), i.s.boss.status, i.working, i.need]));
   if (sig === stripSig) return;
   stripSig = sig;
   strip.replaceChildren();
@@ -130,11 +131,11 @@ function renderStrip(state: OfficeState): void {
     const NS = 'http://www.w3.org/2000/svg';
     const svgEl = document.createElementNS(NS, 'svg');
     svgEl.setAttribute('viewBox', '-30 -72 60 76');
-    svgEl.appendChild(renderCharacter({ id: 'boss', sessionId: s.id, ...looksFor('boss'), mood: look.mood, pose: look.pose, fx: look.fx, name: s.label, tokens: '' }));
+    svgEl.appendChild(renderCharacter({ id: 'boss', sessionId: s.id, ...looksFor('boss'), mood: look.mood, pose: look.pose, fx: look.fx, name: roomTitle(s), tokens: '' }));
     const text = document.createElement('div');
     const name = document.createElement('div');
     name.className = 'cr-name';
-    name.textContent = s.label;
+    name.textContent = roomTitle(s);
     const counts = document.createElement('div');
     counts.className = 'cr-counts';
     counts.append(`${working} working`);
