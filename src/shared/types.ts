@@ -55,6 +55,8 @@ export type AgentStats = {
   /** max 20 */
   recent: string[];
   lastActivity: number;
+  /** Recent API message ids already counted (bounded, newest last); dedupes usage across log lines (see core/logParser.ts). */
+  seenMessageIds?: string[];
 };
 
 export type AgentStatus = 'spawning' | 'working' | 'quiet' | 'handing_off' | 'gone';
