@@ -86,12 +86,6 @@ export function totalTokens(s: AgentStats): number {
   return s.inputTokens + s.outputTokens + s.cacheWrite;
 }
 
-export function formatTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
-  return String(Math.max(0, Math.round(n)));
-}
-
 /** "m:ss" for a duration in ms. */
 export function formatTimer(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));

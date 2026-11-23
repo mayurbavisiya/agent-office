@@ -2,7 +2,13 @@
 html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
 body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 #floor { position: absolute; inset: 0; overflow: auto; background: #2f2b3a; border-radius: 12px; }
-#office { display: block; }
+#office { display: block; overflow: visible; transform-origin: 0 0; transition: transform .25s ease; }
+#floor.zoomed { overflow: hidden; }
+#rooms .room { transition: opacity .25s ease; cursor: zoom-in; }
+#rooms.zoomed .room { cursor: zoom-out; }
+#rooms.zoomed .room:not(.zoom-target) { opacity: 0; pointer-events: none; }
+.char { cursor: pointer; }
+.char.sel .pill { stroke-width: 3.5; }
 #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 15px; pointer-events: none; }
 #empty[hidden], #conn[hidden] { display: none; }
 #conn { position: absolute; top: 8px; right: 12px; padding: 2px 10px; border-radius: 10px; background: #dc2626; color: #fff; font-size: 11px; font-weight: 600; }
@@ -16,6 +22,30 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 .anim-fx .pop { transform-box: fill-box; transform-origin: center; }
 /* crowded rooms: agent name tags only on hover (the sign shows the agent count) */
 .room--crowded .char:not(.boss):not(:hover) .tag { display: none; }
+
+/* info panel: overlay card on the right, styled after the mockup's panel */
+.panel { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 300px; box-sizing: border-box; overflow-y: auto; z-index: 5;
+  background: #fff; border: 1px solid #e3e3e8; border-radius: 12px; padding: 16px; color: #222; box-shadow: 0 4px 18px rgba(0,0,0,.25); }
+.panel[hidden] { display: none; }
+@media (max-width: 519px) { .panel { left: 8px; right: 8px; top: 8px; bottom: 8px; width: auto; } }
+.panel h3 { margin: 0 28px 2px 0; font-size: 17px; overflow-wrap: anywhere; }
+.panel .sub { color: #666; margin-bottom: 10px; overflow-wrap: anywhere; }
+.p-close { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: 0; border-radius: 13px; background: #f1f5f9; color: #334155; font-size: 18px; line-height: 1; cursor: pointer; }
+.p-close:hover { background: #e2e8f0; }
+.p-left { background: #f1f5f9; color: #475569; border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
+.chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; margin: 0 4px 4px 0; overflow-wrap: anywhere; }
+.chip-model { background: #f1f5f9; color: #334155; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
+.stat { background: #f6f6f9; border-radius: 8px; padding: 6px 8px; min-width: 0; }
+.stat b { display: block; font-size: 15px; }
+.stat span { font-size: 11px; color: #777; }
+.bar { height: 8px; background: #eee; border-radius: 5px; overflow: hidden; margin: 3px 0 10px; }
+.bar i { display: block; height: 100%; background: linear-gradient(90deg, #34d399, #f59e0b); }
+.panel h4 { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #888; }
+.tools span { display: inline-block; background: #eef2ff; color: #3730a3; border-radius: 6px; padding: 1px 6px; margin: 2px 3px 2px 0; font-size: 11px; }
+.log { font: 11px/1.6 ui-monospace, monospace; color: #444; max-height: 120px; overflow: auto; background: #fafafa; border-radius: 6px; padding: 6px; }
+.log div { overflow-wrap: anywhere; }
+.log div::before { content: "› "; color: #aaa; }
 
 /* micro animations */
 .blink { animation: blink 4s infinite; transform-box: fill-box; transform-origin: center; }

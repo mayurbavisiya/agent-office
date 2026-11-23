@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { looksFor, agentLook, bossLook, truncate, formatTokens, totalTokens, formatTimer } from '../src/scene/looks.js';
+import { looksFor, agentLook, bossLook, truncate, totalTokens, formatTimer } from '../src/scene/looks.js';
+import { formatTokens } from '../src/scene/panel.js';
 import type { AgentStats } from '../src/shared/types.js';
 
 const stats = (o: Partial<AgentStats> = {}): AgentStats => ({ inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, tools: {}, files: [], recent: [], lastActivity: 0, ...o });
@@ -65,6 +66,7 @@ describe('text helpers', () => {
     expect(formatTokens(999)).toBe('999');
     expect(formatTokens(12345)).toBe('12.3k');
     expect(formatTokens(2_500_000)).toBe('2.5M');
+    expect(formatTokens(undefined)).toBe('—');
   });
 
   it('formats a quiet timer as m:ss', () => {
