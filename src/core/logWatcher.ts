@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events';
+import { statSync } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
+import { StringDecoder } from 'node:string_decoder';
 import { parseLogLine, type LogDelta } from './logParser.js';
 
 const CHUNK = 64 * 1024;
@@ -11,9 +13,7 @@ type Tail = {
   agentId: string | null;
   path: string;
   offset: number;
-  /** undefined until the first successful stat; then the offset starts at the then-current size (or 0 if the file appeared later) */
-  initialised: boolean;
-  startAtEnd: boolean;
+  decoder: StringDecoder;
   leftover: string;
   skipping: boolean;
   busy: boolean;
@@ -29,11 +29,20 @@ export class LogWatcher extends EventEmitter {
     super();
   }
 
-  watch(sessionId: string, agentId: string | null, path: string): void {
+  /** Default starts at EOF (only newly appended lines emit); `fromStart` replays existing content once. A missing file starts at 0. */
+  watch(sessionId: string, agentId: string | null, path: string, opts?: { fromStart?: boolean }): void {
     if (this.closed || this.tails.has(path)) return;
-    this.tails.set(path, { sessionId, agentId, path, offset: 0, initialised: false, startAtEnd: true, leftover: '', skipping: false, busy: false });
-    // Establish the starting offset right away so lines appended just after watch() are not lost.
-    void this.poll(this.tails.get(path)!);
+    let offset = 0;
+    if (!opts?.fromStart) {
+      try {
+        offset = statSync(path).size;
+      } catch {
+        offset = 0;
+      }
+    }
+    const t: Tail = { sessionId, agentId, path, offset, decoder: new StringDecoder('utf8'), leftover: '', skipping: false, busy: false };
+    this.tails.set(path, t);
+    void this.poll(t);
     this.timer ??= setInterval(() => {
       for (const t of this.tails.values()) void this.poll(t);
     }, this.intervalMs);
@@ -64,16 +73,11 @@ export class LogWatcher extends EventEmitter {
       try {
         size = (await stat(t.path)).size;
       } catch {
-        // Missing now: if it shows up later, everything in it is new.
-        if (!t.initialised) t.startAtEnd = false;
         return;
-      }
-      if (!t.initialised) {
-        t.initialised = true;
-        t.offset = t.startAtEnd ? size : 0;
       }
       if (size < t.offset) {
         t.offset = 0;
+        t.decoder = new StringDecoder('utf8');
         t.leftover = '';
         t.skipping = false;
       }
@@ -85,7 +89,7 @@ export class LogWatcher extends EventEmitter {
           const { bytesRead } = await fh.read(buf, 0, Math.min(CHUNK, size - t.offset), t.offset);
           if (bytesRead === 0) break;
           t.offset += bytesRead;
-          this.consume(t, buf.toString('utf8', 0, bytesRead));
+          this.consume(t, t.decoder.write(buf.subarray(0, bytesRead)));
         }
       } finally {
         await fh.close();

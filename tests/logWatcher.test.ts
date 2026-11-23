@@ -83,7 +83,7 @@ describe('LogWatcher', () => {
     expect(got.map((g) => g.d.messageId)).toEqual(['late']);
   });
 
-  it('unwatch stops emitting and close clears timers', async () => {
+  it('unwatch stops emitting', async () => {
     const { file, got } = setup();
     writeFileSync(file, '');
     w!.watch('s1', null, file);
@@ -91,6 +91,53 @@ describe('LogWatcher', () => {
     appendFileSync(file, line('z') + '\n');
     await sleep(80);
     expect(got).toHaveLength(0);
+  });
+
+  it('close() stops all polling: nothing emits afterwards and no timers remain', async () => {
+    const { file, got } = setup();
+    writeFileSync(file, '');
+    w!.watch('s1', null, file);
     w!.close();
+    appendFileSync(file, line('z') + '\n');
+    await sleep(80);
+    expect(got).toHaveLength(0);
+    expect((w as unknown as { timer?: unknown }).timer).toBeUndefined();
+  });
+
+  it('fromStart emits existing lines once, then new appends', async () => {
+    const { file, got } = setup();
+    writeFileSync(file, line('e1') + '\n' + line('e2') + '\n');
+    w!.watch('s1', null, file, { fromStart: true });
+    await until(() => got.length >= 2);
+    await sleep(60);
+    appendFileSync(file, line('e3') + '\n');
+    await until(() => got.length >= 3);
+    expect(got.map((g) => g.d.messageId)).toEqual(['e1', 'e2', 'e3']);
+  });
+
+  it('a line appended immediately after watch() is not lost (default EOF baseline is synchronous)', async () => {
+    const { file, got } = setup();
+    writeFileSync(file, line('old') + '\n');
+    w!.watch('s1', null, file);
+    appendFileSync(file, line('new') + '\n');
+    await until(() => got.length >= 1);
+    expect(got.map((g) => g.d.messageId)).toEqual(['new']);
+  });
+
+  it('keeps multi-byte characters intact when a line is written in two appends split mid-character', async () => {
+    const { file, got } = setup();
+    writeFileSync(file, '');
+    w!.watch('s1', null, file);
+    const l = JSON.stringify({
+      type: 'assistant',
+      message: { id: 'u1', content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'ファイル/é.ts' } }] },
+    }) + '\n';
+    const bytes = Buffer.from(l, 'utf8');
+    const cut = bytes.indexOf(Buffer.from('é', 'utf8')) + 1; // between the two bytes of é
+    appendFileSync(file, bytes.subarray(0, cut));
+    await sleep(80);
+    appendFileSync(file, bytes.subarray(cut));
+    await until(() => got.length >= 1);
+    expect(got[0].d.toolUses[0].input.file_path).toBe('ファイル/é.ts');
   });
 });

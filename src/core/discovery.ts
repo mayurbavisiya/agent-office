@@ -1,4 +1,5 @@
 import { closeSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
+import { StringDecoder } from 'node:string_decoder';
 import { basename, dirname, join } from 'node:path';
 
 export type DiscoveredSession = {
@@ -30,11 +31,12 @@ function findCwd(file: string): string | undefined {
     const buf = Buffer.alloc(64 * 1024);
     let pos = 0;
     let carry = '';
+    const dec = new StringDecoder('utf8');
     while (pos < 1024 * 1024) {
       const n = readSync(fd, buf, 0, buf.length, pos);
       if (n === 0) break;
       pos += n;
-      const parts = (carry + buf.toString('utf8', 0, n)).split('\n');
+      const parts = (carry + dec.write(buf.subarray(0, n))).split('\n');
       carry = parts.pop() ?? '';
       for (const l of parts) {
         if (!l.includes('"cwd"')) continue;

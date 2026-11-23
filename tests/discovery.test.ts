@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { cpSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
+import { cpSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { discoverActiveSessions, subagentLogPath } from '../src/core/discovery.js';
@@ -40,6 +40,20 @@ describe('discoverActiveSessions', () => {
     const dir = build();
     const r = discoverActiveSessions(claudeDir({ CLAUDE_CONFIG_DIR: dir }), NOW);
     expect(r.map((s) => s.sessionId)).toEqual([S1]);
+  });
+
+  it('reads a multi-byte cwd intact even when it straddles a 64 KB block boundary', () => {
+    root = mkdtempSync(join(tmpdir(), 'disc-'));
+    const proj = join(root, 'projects', 'p');
+    mkdirSync(proj, { recursive: true });
+    const cwd = '/ファイル/é';
+    // pre is 65526 bytes, so the 64 KB boundary falls inside the first katakana of the cwd line
+    const pre = '{"type":"x","pad":"' + 'a'.repeat(65504) + '"}\n';
+    const lineBytes = Buffer.from(JSON.stringify({ cwd }) + '\n', 'utf8');
+    writeFileSync(join(proj, 'abc.jsonl'), Buffer.concat([Buffer.from(pre), lineBytes]));
+    expect(pre.length).toBe(65526);
+    const r = discoverActiveSessions(root, Date.now());
+    expect(r[0].cwd).toBe(cwd);
   });
 
   it('returns [] when the projects dir is missing', () => {
