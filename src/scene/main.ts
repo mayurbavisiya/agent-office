@@ -4,6 +4,9 @@ import { Floor } from './floor.js';
 import { tickTimers } from './characters.js';
 import { InfoPanel } from './panel.js';
 import { tokText } from './rooms.js';
+import { agentLook, bossLook, looksFor } from './looks.js';
+import { renderCharacter } from './characters.js';
+import type { OfficeState } from '../shared/types.js';
 import { animStats, planAnimations, ROOM_FADED_EVENT, runAnimations } from './animator.js';
 
 const viewport = document.getElementById('floor') as HTMLElement;
@@ -13,7 +16,24 @@ const empty = document.getElementById('empty') as HTMLElement;
 const conn = document.getElementById('conn') as HTMLElement;
 
 const floor = new Floor(svg, layer, viewport);
-const token = new URLSearchParams(location.search).get('token') ?? '';
+const params = new URLSearchParams(location.search);
+const token = params.get('token') ?? '';
+const shell = params.get('shell') === 'electron';
+const compact = params.get('compact') === '1';
+/** a room to zoom as soon as it exists (set when leaving compact mode via a chip) */
+let pendingZoom = params.get('zoom');
+document.documentElement.classList.toggle('shell', shell);
+document.documentElement.classList.toggle('compact', compact);
+// the preload (contextIsolation) exposes only these two calls, never Node
+type Shell = { expandRoom(sessionId: string): void; hide(): void };
+const shellApi = (window as unknown as { agentOfficeShell?: Shell }).agentOfficeShell;
+if (shell) {
+  (document.getElementById('dragbar') as HTMLElement).hidden = false;
+  document.getElementById('hide-btn')?.addEventListener('click', () => shellApi?.hide());
+}
+const strip = document.getElementById('strip') as HTMLElement;
+strip.hidden = !compact;
+
 
 const panelEl = document.getElementById('panel') as HTMLElement;
 const panel = new InfoPanel(panelEl);
@@ -86,7 +106,66 @@ function refreshTags(): void {
   }
 }
 
+let stripSig = '';
+let compactState: OfficeState = { sessions: {} };
+function renderStrip(state: OfficeState): void {
+  const rooms = Floor.order(state).filter((s) => s.status !== 'ended');
+  empty.hidden = rooms.length > 0;
+  const info = rooms.map((s) => {
+    const agents = Object.values(s.agents).filter((a) => a.status !== 'gone');
+    const working = agents.filter((a) => agentLook(a.status).fx === 'none').length + (s.boss.status === 'working' || s.boss.status === 'delegating' ? 1 : 0);
+    return { s, working, need: s.boss.status === 'needs_you' ? 1 : 0, total: agents.length + 1 };
+  });
+  const sig = JSON.stringify(info.map((i) => [i.s.id, i.s.label, i.s.boss.status, i.working, i.need]));
+  if (sig === stripSig) return;
+  stripSig = sig;
+  strip.replaceChildren();
+  for (const { s, working, need } of info) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip-room';
+    b.dataset.sessionId = s.id;
+    const look = bossLook(s.boss.status);
+    const NS = 'http://www.w3.org/2000/svg';
+    const svgEl = document.createElementNS(NS, 'svg');
+    svgEl.setAttribute('viewBox', '-30 -72 60 76');
+    svgEl.appendChild(renderCharacter({ id: 'boss', sessionId: s.id, ...looksFor('boss'), mood: look.mood, pose: look.pose, fx: look.fx, name: s.label, tokens: '' }));
+    const text = document.createElement('div');
+    const name = document.createElement('div');
+    name.className = 'cr-name';
+    name.textContent = s.label;
+    const counts = document.createElement('div');
+    counts.className = 'cr-counts';
+    counts.append(`${working} working`);
+    if (need) {
+      const n = document.createElement('span');
+      n.className = 'cr-need';
+      n.textContent = ` \u00b7 ${need} needs you`;
+      counts.append(n);
+    }
+    text.append(name, counts);
+    b.append(svgEl, text);
+    strip.appendChild(b);
+  }
+}
+strip.addEventListener('click', (e) => {
+  const id = (e.target as Element).closest<HTMLElement>('.chip-room')?.dataset.sessionId;
+  if (!id) return;
+  if (shellApi) shellApi.expandRoom(id);
+  else {
+    const q = new URLSearchParams(location.search);
+    q.delete('compact');
+    q.set('zoom', id);
+    location.search = q.toString();
+  }
+});
+
 function afterRender(): void {
+  if (compact) return;
+  if (pendingZoom && floor.roomEl(pendingZoom)) {
+    setZoom(pendingZoom);
+    pendingZoom = null;
+  }
   if (zoomed && !floor.roomEl(zoomed)) setZoom(null);
   else if (zoomed) applyZoom();
   if (zoomed) floor.roomEl(zoomed)?.classList.add('zoom-target');
@@ -96,6 +175,7 @@ function afterRender(): void {
 }
 
 function draw(): void {
+  if (compact) return renderStrip(compactState);
   const n = floor.render();
   empty.hidden = n > 0;
   afterRender();
@@ -148,6 +228,11 @@ function connect(): void {
     if (!msg || typeof msg !== 'object' || !msg.state || typeof msg.state.sessions !== 'object') return;
     // queue first (marks departing characters so this render keeps them), then render; queued
     // steps start on a microtask, after the render and before the next paint
+    if (compact) {
+      compactState = msg.state;
+      renderStrip(msg.state);
+      return;
+    }
     if (msg.type === 'events' && Array.isArray(msg.events)) runAnimations(planAnimations(msg.events, msg.state), svg);
     empty.hidden = floor.render(msg.state) > 0;
     afterRender();

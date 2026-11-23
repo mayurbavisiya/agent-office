@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.scene.json",
+    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.scene.json && npm run build:scene && npm run build:main",
     "serve": "tsx tools/serve.ts",
     "demo": "tsx tools/demo.ts",
-    "build:scene": "tsx tools/build-scene.ts"
+    "build:scene": "tsx tools/build-scene.ts",
+    "build:main": "tsx tools/build-main.ts",
+    "start": "electron dist/main/main.js"
   },
   "dependencies": {
     "ws": "^8.23.0"
@@ -16,12 +18,14 @@
   "devDependencies": {
     "@types/node": "^26.6.6",
     "@types/ws": "^8.18.2",
+    "electron": "^45.4.1",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.1.1"
   },
   "allowScripts": {
-    "esbuild@0.28.2": true
+    "esbuild@0.28.2": true,
+    "electron@45.4.1": true
   }
 }

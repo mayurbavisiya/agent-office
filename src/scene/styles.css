@@ -86,3 +86,29 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Electron shell: transparent page, slim drag bar on top, rounded floor (?shell=electron) */
+html.shell, html.shell body { background: transparent; }
+#dragbar { position: absolute; top: 0; left: 0; right: 0; height: 18px; z-index: 10; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 4px 0 12px; background: #3a3547; border-radius: 12px 12px 0 0; color: #94a3b8; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; -webkit-app-region: drag; user-select: none; }
+#dragbar[hidden] { display: none; }
+#hide-btn { -webkit-app-region: no-drag; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #94a3b8; font-size: 10px; line-height: 16px; cursor: pointer; }
+#hide-btn:hover { background: #dc2626; color: #fff; }
+html.shell #floor { top: 18px; border-radius: 0 0 12px 12px; }
+html.shell .panel { top: 30px; }
+html.shell #empty { top: 18px; }
+html.shell #conn { top: 24px; }
+
+/* compact strip (?compact=1): one chip per active room */
+#strip { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; align-items: center; padding: 6px 10px; box-sizing: border-box; overflow-x: auto; overflow-y: hidden; background: #2f2b3a; border-radius: 12px; }
+#strip[hidden] { display: none; }
+html.shell #strip { top: 18px; border-radius: 0 0 12px 12px; }
+html.compact #floor, html.compact #panel { display: none; }
+html.compact #empty { top: 18px; }
+.chip-room { flex: none; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 12px 0 6px; border: 0; border-radius: 12px; background: #403a50; color: #e2e8f0; font: inherit; cursor: pointer; text-align: left; }
+.chip-room:hover { background: #4b4560; }
+.chip-room svg { width: 36px; height: 46px; flex: none; }
+.chip-room .tag { display: none; }
+.chip-room .cr-name { font-weight: 700; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-room .cr-counts { font-size: 11px; color: #cbd5e1; }
+.chip-room .cr-need { color: #fbbf24; font-weight: 700; }
