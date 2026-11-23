@@ -7,6 +7,8 @@ export type LogDelta = {
   usage?: { input: number; output: number; cacheRead: number; cacheWrite: number };
   /** message.id: one API message is logged as several lines with identical usage; usage counts once per id */
   messageId?: string;
+  gitBranch?: string;
+  cwd?: string;
   toolUses: { name: string; input: Record<string, unknown> }[];
 };
 
@@ -30,6 +32,8 @@ export function parseLogLine(line: string): LogDelta | null {
       const t = Date.parse(obj.timestamp);
       if (Number.isFinite(t)) d.timestamp = t;
     }
+    if (typeof obj.gitBranch === 'string' && obj.gitBranch) d.gitBranch = obj.gitBranch;
+    if (typeof obj.cwd === 'string' && obj.cwd) d.cwd = obj.cwd;
     if (typeof msg.model === 'string' && msg.model) {
       d.model = msg.model;
       relevant = true;

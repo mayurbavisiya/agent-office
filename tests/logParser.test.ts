@@ -39,6 +39,13 @@ describe('parseLogLine', () => {
     expect(parseLogLine('{"type":"assistant","message":{"usage":{"input_tokens":"x"},"content":[null,5,{"type":"tool_use"}]}}')).toBeNull();
   });
 
+  it('populates gitBranch and cwd from top-level fields', () => {
+    const d = deltas(MAIN)[0];
+    expect(d.cwd).toBe('/scratch/ao');
+    expect(typeof d.gitBranch).toBe('string');
+    expect(parseLogLine('{"type":"assistant","cwd":"/x","gitBranch":"main","message":{"model":"m"}}')).toMatchObject({ cwd: '/x', gitBranch: 'main' });
+  });
+
   it('every fixture line parses without throwing', () => {
     for (const f of [MAIN, SUB]) for (const l of lines(f)) expect(() => parseLogLine(l)).not.toThrow();
   });
