@@ -7,3 +7,8 @@ Installed (latest at time of setup, 2026-11-23; Node v26.5.0, npm 11.17.0): type
 esbuild has a postinstall script that this npm version blocks until approved (allow-scripts warning).
 After a fresh `npm install`, run `npm approve-scripts esbuild` (non-interactive, works), then verify
 with `npx esbuild --version` (expect 0.28.2). Later tasks that bundle with esbuild need this step.
+
+## Demo mode / tsx
+`tsx` is a dev dependency, used to run the TypeScript tools (`npm run serve`, `npm run demo`) because the sources use `.js` import suffixes.
+`npm run serve` starts the app with `~/.agent-office/config.json` and prints the URL with `?token=`. `npm run demo -- [--speed 2] [--sessions 3] [--port N --token T]`
+replays the hook fixtures as fake sessions over POST /event (fixed ~600 ms cadence, ~2500 ms before SubagentStop, both divided by speed) until Ctrl-C.

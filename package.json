@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "build": "tsc --noEmit"
+    "build": "tsc --noEmit",
+    "serve": "tsx tools/serve.ts",
+    "demo": "tsx tools/demo.ts"
   },
   "dependencies": {
     "ws": "^8.23.0"
@@ -14,6 +16,7 @@
     "@types/node": "^26.6.6",
     "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.1.1"
   },
