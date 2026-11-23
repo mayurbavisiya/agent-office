@@ -392,7 +392,7 @@ export class OfficeStore {
           if (existing) {
             if (type && existing.type === 'unknown') existing.type = type;
           } else {
-            this.ensureAgent(s, m, agentId, now, out, { status: 'spawning', type, claim: true });
+            this.ensureAgent(s, m, agentId, now, out, { status: 'spawning', type, task: str(e.description), claim: true });
           }
         }
         break;

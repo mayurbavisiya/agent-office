@@ -1,18 +1,45 @@
-import { closeSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import { basename, dirname, join } from 'node:path';
+
+export type DiscoveredSubagent = {
+  agentId: string;
+  path: string;
+  /** meta.json `finished === true`; missing/unreadable meta means assume running */
+  finished: boolean;
+  type?: string;
+  description?: string;
+  toolUseId?: string;
+};
 
 export type DiscoveredSession = {
   sessionId: string;
   cwd?: string;
   mainLog: string;
-  subagentLogs: { agentId: string; path: string }[];
+  subagentLogs: DiscoveredSubagent[];
 };
 
 /** `<session-dir>/subagents/agent-<agentId>.jsonl`, where session-dir is the transcript path without `.jsonl`. */
 export function subagentLogPath(_claudeDir: string, transcriptPath: string, agentId: string): string {
   const sessionDir = join(dirname(transcriptPath), basename(transcriptPath).replace(/\.jsonl$/, ''));
   return join(sessionDir, 'subagents', `agent-${agentId}.jsonl`);
+}
+
+/** Reads the sibling `agent-<id>.meta.json`; never throws. */
+function readMeta(logPath: string): Omit<DiscoveredSubagent, 'agentId' | 'path'> {
+  const out: Omit<DiscoveredSubagent, 'agentId' | 'path'> = { finished: false };
+  try {
+    const o: unknown = JSON.parse(readFileSync(logPath.replace(/\.jsonl$/, '.meta.json'), 'utf8'));
+    if (typeof o !== 'object' || o === null) return out;
+    const m = o as Record<string, unknown>;
+    out.finished = m.finished === true;
+    if (typeof m.agentType === 'string') out.type = m.agentType;
+    if (typeof m.description === 'string') out.description = m.description;
+    if (typeof m.toolUseId === 'string') out.toolUseId = m.toolUseId;
+  } catch {
+    // missing or corrupt: assume running
+  }
+  return out;
 }
 
 const safeReaddir = (p: string): string[] => {
@@ -83,7 +110,7 @@ export function discoverActiveSessions(claudeDir: string, now: number, windowMs 
       const subagentLogs = safeReaddir(subDir)
         .map((f) => /^agent-(.+)\.jsonl$/.exec(f))
         .filter((m): m is RegExpExecArray => m !== null)
-        .map((m) => ({ agentId: m[1], path: join(subDir, m[0]) }));
+        .map((m) => ({ agentId: m[1], path: join(subDir, m[0]), ...readMeta(join(subDir, m[0])) }));
       const s: DiscoveredSession = { sessionId, mainLog, subagentLogs };
       const cwd = findCwd(mainLog);
       if (cwd) s.cwd = cwd;

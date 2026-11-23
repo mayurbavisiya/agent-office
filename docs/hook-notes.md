@@ -125,3 +125,7 @@ Headless mode cannot produce these; check them in an interactive session in the 
 2. `Notification` events (`message`, `notification_type`, e.g. permission prompts): none fired in headless runs.
 3. Teammate -> lead link for real agent teams: headless fell back to a plain named `Agent` call (section 4).
    Unverified how a teammate's events reference the lead.
+
+## Subagent `meta.json` (discovery)
+`agent-<id>.meta.json` always carried `finished` (true) in every fixture, so discovery uses it alone: `finished === true` skips the log;
+a missing or unreadable file or field means assume running. `tool_result` in the main log is not parsed for this.

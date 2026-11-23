@@ -70,7 +70,14 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
       store.applyHook({ hook_event_name: 'SessionStart', source: 'discovered', session_id: d.sessionId, cwd: d.cwd }, now);
       transcripts.set(d.sessionId, d.mainLog);
       watchLog(d.sessionId, null, d.mainLog);
-      for (const a of d.subagentLogs) watchLog(d.sessionId, a.agentId, a.path);
+      for (const a of d.subagentLogs) {
+        if (a.finished) continue; // finished while the app was not running: neither shown nor watched (its tokens are not added to the team total)
+        store.applyHook(
+          { hook_event_name: 'SubagentStart', session_id: d.sessionId, agent_id: a.agentId, agent_type: a.type, description: a.description },
+          now,
+        );
+        watchLog(d.sessionId, a.agentId, a.path);
+      }
     }
   } catch {
     // discovery is best effort

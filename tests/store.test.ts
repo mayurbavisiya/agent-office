@@ -213,6 +213,12 @@ describe('OfficeStore: subagents', () => {
     expect(a.status).toBe('working');
   });
 
+  it('SubagentStart with a description (synthetic, from discovery) sets the task', () => {
+    const s = new OfficeStore();
+    s.applyHook(ev({ hook_event_name: 'SubagentStart', agent_id: 'A', agent_type: 'Plan', description: 'do it' }), 0);
+    expect(s.snapshot().sessions.S1.agents.A.task).toBe('do it');
+  });
+
   it('spawning → working on tick after 2 s without activity', () => {
     const s = new OfficeStore();
     s.applyHook(ev({ hook_event_name: 'SubagentStart', agent_id: 'A', agent_type: 'Plan' }), 0);

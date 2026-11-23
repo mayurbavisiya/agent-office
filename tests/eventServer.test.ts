@@ -179,10 +179,12 @@ describe('startApp', () => {
     return { port, app };
   }
 
-  it('(a) discovered session: main and subagent logs replay into the store, even after other store changes', async () => {
+  it('(a) discovered session: main and unfinished subagent logs replay into the store, even after other store changes', async () => {
     const { home, proj } = claudeHome(true);
     // make the subagent log long so its first delta lands well after the main log's (which changes the store first)
     const subLog = join(proj, SID, 'subagents', `agent-${AID}.jsonl`);
+    const mp = join(proj, SID, 'subagents', `agent-${AID}.meta.json`);
+    writeFileSync(mp, JSON.stringify({ ...JSON.parse(readFileSync(mp, 'utf8')), finished: false }));
     writeFileSync(subLog, '{"type":"noise"}\n'.repeat(60000) + readFileSync(subLog, 'utf8'));
     const { port, app } = await bootApp(home);
     // unrelated store changes before the subagent's first delta must not drop its log
@@ -194,6 +196,25 @@ describe('startApp', () => {
       return !!s && s.boss.stats.outputTokens > 0 && !!a && a.stats.outputTokens > 0;
     });
     expect(app.store.snapshot().sessions[SID]!.cwd).toBe('/scratch/ao');
+  });
+
+  it('startApp does not show finished discovered subagents', async () => {
+    const { home, proj } = claudeHome(true);
+    const subs = join(proj, SID, 'subagents');
+    const metaPath = join(subs, `agent-${AID}.meta.json`);
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+    // AID stays finished; a second, unfinished copy
+    const RUN = 'arunning0000000001';
+    cpSync(join(subs, `agent-${AID}.jsonl`), join(subs, `agent-${RUN}.jsonl`));
+    writeFileSync(join(subs, `agent-${RUN}.meta.json`), JSON.stringify({ ...meta, finished: false, agentType: 'Plan', description: 'still going' }));
+    const { app } = await bootApp(home);
+    await until(() => (app.store.snapshot().sessions[SID]?.agents[RUN]?.stats.outputTokens ?? 0) > 0);
+    const agents = app.store.snapshot().sessions[SID]!.agents;
+    expect(Object.keys(agents)).toEqual([RUN]);
+    expect(agents[RUN].type).toBe('Plan');
+    expect(agents[RUN].task).toBe('still going');
+    expect(app.watchedPaths()).not.toContain(join(subs, `agent-${AID}.jsonl`));
+    expect(app.watchedPaths()).toContain(join(subs, `agent-${RUN}.jsonl`));
   });
 
   it('(b) subagent log that appears after SubagentStart is attached', async () => {
@@ -263,7 +284,7 @@ describe('startApp', () => {
     expect(app.watchedPaths()).toContain(tp);
   });
 
-  it('(f) a never-seen subagent log is unwatched once its session is pruned', async () => {
+  it('(f) a discovered subagent that never yields a delta is unwatched once its session is pruned', async () => {
     const { home, proj } = claudeHome();
     const tp = join(proj, 'S8.jsonl');
     writeFileSync(tp, assistantLine('f1', 5));
@@ -273,7 +294,7 @@ describe('startApp', () => {
     const { port, app } = await bootApp(home);
     await until(() => app.store.snapshot().sessions.S8?.boss.stats.outputTokens === 5);
     expect(app.watchedPaths()).toContain(subLog);
-    expect(app.store.snapshot().sessions.S8!.agents.ghost).toBeUndefined();
+    expect(app.store.snapshot().sessions.S8!.agents.ghost?.status).toBe('spawning'); // seeded from discovery (no meta.json: assume running)
     await post(port, JSON.stringify({ hook_event_name: 'SessionEnd', session_id: 'S8', reason: 'other' }), auth);
     app.store.tick(Date.now() + 3 * 3_600_000);
     expect(app.store.snapshot().sessions.S8).toBeUndefined();

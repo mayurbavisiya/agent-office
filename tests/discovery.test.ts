@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { cpSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
+import { cpSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { discoverActiveSessions, subagentLogPath } from '../src/core/discovery.js';
@@ -32,8 +32,39 @@ describe('discoverActiveSessions', () => {
     expect(r[0].cwd).toBe('/scratch/ao');
     expect(r[0].mainLog).toBe(join(root, 'projects', 'proj-a', `${S1}.jsonl`));
     expect(r[0].subagentLogs).toEqual([
-      { agentId: 'a1c6ea8b5593d9948', path: join(root, 'projects', 'proj-a', S1, 'subagents', 'agent-a1c6ea8b5593d9948.jsonl') },
+      {
+        agentId: 'a1c6ea8b5593d9948',
+        path: join(root, 'projects', 'proj-a', S1, 'subagents', 'agent-a1c6ea8b5593d9948.jsonl'),
+        finished: true,
+        type: 'Explore',
+        description: 'List files in ao folder',
+        toolUseId: 'toolu_017vHtXUyMcZpErpSwmsvLmW',
+      },
     ]);
+  });
+
+  const subDir = (r: string) => join(r, 'projects', 'proj-a', S1, 'subagents');
+
+  it('discovery marks subagent finished from meta.json', () => {
+    const dir = build();
+    expect(discoverActiveSessions(dir, NOW)[0].subagentLogs[0].finished).toBe(true);
+    const meta = join(subDir(dir), 'agent-a1c6ea8b5593d9948.meta.json');
+    const o = JSON.parse(readFileSync(meta, 'utf8'));
+    writeFileSync(meta, JSON.stringify({ ...o, finished: false }));
+    expect(discoverActiveSessions(dir, NOW)[0].subagentLogs[0].finished).toBe(false);
+  });
+
+  it('discovery tolerates missing/corrupt meta.json', () => {
+    const dir = build();
+    const meta = join(subDir(dir), 'agent-a1c6ea8b5593d9948.meta.json');
+    writeFileSync(meta, '{not json');
+    expect(discoverActiveSessions(dir, NOW)[0].subagentLogs[0]).toMatchObject({ finished: false });
+    rmSync(meta);
+    const l = discoverActiveSessions(dir, NOW)[0].subagentLogs[0];
+    expect(l.finished).toBe(false);
+    expect(l.type).toBeUndefined();
+    writeFileSync(meta, '{}');
+    expect(discoverActiveSessions(dir, NOW)[0].subagentLogs[0].finished).toBe(false);
   });
 
   it('honours a claudeDir passed from CLAUDE_CONFIG_DIR', () => {
