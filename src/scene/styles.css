@@ -1,0 +1,54 @@
+/* Agent Office scene. Keyframes ported from the approved mockup (office-v2.html). */
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
+#floor { position: absolute; inset: 0; overflow: auto; background: #2f2b3a; border-radius: 12px; }
+#office { display: block; }
+#empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 15px; pointer-events: none; }
+#empty[hidden], #conn[hidden] { display: none; }
+#conn { position: absolute; top: 8px; right: 12px; padding: 2px 10px; border-radius: 10px; background: #dc2626; color: #fff; font-size: 11px; font-weight: 600; }
+
+.room .dim { opacity: 0; pointer-events: none; transition: opacity .6s; }
+.room.room--dim .dim { opacity: .32; }
+.char .tag { pointer-events: none; }
+/* crowded rooms: agent name tags only on hover (the sign shows the agent count) */
+.room--crowded .char:not(.boss):not(:hover) .tag { display: none; }
+
+/* micro animations */
+.blink { animation: blink 4s infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes blink { 0%, 93%, 100% { transform: scaleY(1) } 96% { transform: scaleY(.1) } }
+.typeL, .typeR { transform-box: fill-box; transform-origin: top center; animation: type .22s infinite alternate; }
+.typeR { animation-delay: .11s; }
+@keyframes type { from { transform: rotate(-14deg) } to { transform: rotate(10deg) } }
+.bob { animation: bob 1.6s ease-in-out infinite; }
+@keyframes bob { 50% { transform: translateY(-2px) } }
+.scratch { transform-box: fill-box; transform-origin: bottom center; animation: scratch .35s infinite alternate; }
+@keyframes scratch { from { transform: rotate(-20deg) } to { transform: rotate(15deg) } }
+.legA, .legB { transform-box: fill-box; transform-origin: top center; animation: step .3s infinite alternate; }
+.legB { animation-direction: alternate-reverse; }
+@keyframes step { from { transform: rotate(-25deg) } to { transform: rotate(25deg) } }
+.sweat { animation: drip 1.2s infinite; }
+@keyframes drip { from { transform: translateY(0); opacity: 1 } to { transform: translateY(12px); opacity: 0 } }
+.scroll { animation: scroll 2.2s linear infinite; }
+@keyframes scroll { from { transform: translateY(0) } to { transform: translateY(-24px) } }
+.cloud { animation: cloud 30s linear infinite; }
+@keyframes cloud { from { transform: translateX(-80px) } to { transform: translateX(200px) } }
+.hand { transform-box: fill-box; transform-origin: bottom center; animation: spin 8s linear infinite; }
+.hand2 { transform-box: fill-box; transform-origin: bottom center; animation: spin 60s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg) } }
+.steam { animation: steam 2s infinite; }
+@keyframes steam { from { transform: translateY(0); opacity: .7 } to { transform: translateY(-12px); opacity: 0 } }
+.bubbleq { animation: qq 1s ease-in-out infinite alternate; }
+@keyframes qq { to { transform: translateY(-4px) } }
+.zz { animation: zz 2.5s infinite; opacity: 0; }
+@keyframes zz { from { opacity: 0; transform: translate(0, 0) } 30% { opacity: 1 } to { opacity: 0; transform: translate(10px, -18px) } }
+.cooler { animation: glug 3s infinite; }
+@keyframes glug { 0%, 80%, 100% { transform: translateY(0) } 85% { transform: translateY(-3px) } }
+/* boss waiting on team: foot-tapping bob */
+.tapping .bob { animation: tap .45s ease-in-out infinite alternate; }
+@keyframes tap { from { transform: translateY(0) } to { transform: translateY(-2.5px) } }
+/* sleeping boss breathes slowly instead of bobbing */
+[data-mood="sleepy"] .bob { animation-duration: 3.2s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

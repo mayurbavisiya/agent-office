@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "build": "tsc --noEmit",
+    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.scene.json",
     "serve": "tsx tools/serve.ts",
-    "demo": "tsx tools/demo.ts"
+    "demo": "tsx tools/demo.ts",
+    "build:scene": "tsx tools/build-scene.ts"
   },
   "dependencies": {
     "ws": "^8.23.0"

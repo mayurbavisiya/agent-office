@@ -9,5 +9,6 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["src", "tools", "tests", "vitest.config.ts"]
+  "include": ["src", "tools", "tests", "vitest.config.ts"],
+  "exclude": ["src/scene"]
 }
