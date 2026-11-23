@@ -240,7 +240,8 @@ export class OfficeStore {
         sid = link.leadSessionId;
         aid ??= link.agentId;
       }
-      const s = this.ensureSession(sid, undefined, now, out);
+      const s = this.ensureSession(sid, str(delta.cwd) ?? undefined, now, out);
+      if (str(delta.gitBranch)) s.branch = delta.gitBranch;
       const m = this.meta.get(sid)!;
       if (aid) {
         const a = this.ensureAgent(s, m, aid, now, out, {});

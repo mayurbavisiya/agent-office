@@ -565,3 +565,18 @@ describe('OfficeStore: robustness', () => {
     }
   });
 });
+
+describe('applyLog session metadata', () => {
+  it('delta gitBranch sets branch; delta cwd fills missing cwd/label but never overwrites', () => {
+    const s = new OfficeStore();
+    s.applyLog('S9', null, { toolUses: [], gitBranch: 'main', cwd: '/work/proj' }, 100);
+    let sess = s.snapshot().sessions.S9!;
+    expect(sess.branch).toBe('main');
+    expect(sess.cwd).toBe('/work/proj');
+    expect(sess.label).toBe('proj');
+    s.applyLog('S9', null, { toolUses: [], gitBranch: 'dev', cwd: '/other/place' }, 200);
+    sess = s.snapshot().sessions.S9!;
+    expect(sess.branch).toBe('dev');
+    expect(sess.cwd).toBe('/work/proj');
+  });
+});
