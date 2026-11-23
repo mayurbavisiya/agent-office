@@ -93,14 +93,25 @@ describe('forward.sh', () => {
 
   it('with 300 KB stdin payload, forwards intact', async () => {
     const { store, port } = await boot();
-    const home = homeWith({ port, token: TOKEN });
-    await run(home, JSON.stringify(ev()));
-    const big = { hook_event_name: 'PreToolUse', session_id: 'S1', cwd: '/w/proj', tool_name: 'Write', tool_use_id: 'tu1', tool_input: { content: 'x'.repeat(300 * 1024) } };
-    const r = await run(home, JSON.stringify(big));
-    expect(r.code).toBe(0);
-    expect(r.out + r.err).toBe('');
-    // a truncated body would be invalid JSON, rejected by the server, and never counted
-    const s = store.snapshot().sessions.S1;
-    expect(JSON.stringify(s)).toContain('Write');
+    // blob first, session_id/cwd AFTER it: the session only exists with label 'tail-proj'
+    // if the entire body arrived (the server parses the whole body before applying it)
+    const body = JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', pad: 'x'.repeat(300 * 1024), session_id: 'BIG-1', cwd: '/w/tail-proj' });
+    expect(body.length).toBeGreaterThan(300 * 1024);
+    const r = await run(homeWith({ port, token: TOKEN }), body);
+    expect(r).toMatchObject({ code: 0, out: '', err: '' });
+    const sessions = store.snapshot().sessions;
+    expect(Object.keys(sessions)).toEqual(['BIG-1']);
+    expect(sessions['BIG-1'].label).toBe('tail-proj');
+  });
+
+  it('with a server that accepts but never responds, exits 0 within the curl timeout', async () => {
+    const socks: Array<{ destroy(): void }> = [];
+    const hung = createServer((sock) => { socks.push(sock); });
+    await new Promise<void>((res) => hung.listen(0, '127.0.0.1', res));
+    closers.push(() => new Promise<void>((res) => { hung.close(() => res()); socks.forEach((k) => k.destroy()); }));
+    const port = (hung.address() as { port: number }).port;
+    const r = await run(homeWith({ port, token: TOKEN }), JSON.stringify(ev()));
+    expect(r).toMatchObject({ code: 0, out: '', err: '' });
+    expect(r.ms).toBeLessThan(2500);
   });
 });
