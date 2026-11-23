@@ -1,7 +1,7 @@
 /* Agent Office scene. Keyframes ported from the approved mockup (office-v2.html). */
-html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+html, body { margin: 0; height: 100%; background: #2f2b3a; overflow: hidden; }
 body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
-#floor { position: absolute; inset: 0; overflow: auto; background: #2f2b3a; border-radius: 12px; }
+#floor { position: absolute; inset: 0; overflow: auto; background: #2f2b3a; }
 #office { display: block; overflow: visible; transform-origin: 0 0; transition: transform .25s ease; }
 #floor.zoomed { overflow: hidden; }
 #rooms .room { transition: opacity .25s ease; cursor: zoom-in; }

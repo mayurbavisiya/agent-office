@@ -4,7 +4,8 @@ import { Floor } from './floor.js';
 import { tickTimers } from './characters.js';
 import { InfoPanel } from './panel.js';
 import { tokText } from './rooms.js';
-import { agentLook, bossLook, looksFor } from './looks.js';
+import { workingCount } from '../shared/counts.js';
+import { bossLook, looksFor } from './looks.js';
 import { renderCharacter } from './characters.js';
 import type { OfficeState } from '../shared/types.js';
 import { animStats, planAnimations, ROOM_FADED_EVENT, runAnimations } from './animator.js';
@@ -113,7 +114,7 @@ function renderStrip(state: OfficeState): void {
   empty.hidden = rooms.length > 0;
   const info = rooms.map((s) => {
     const agents = Object.values(s.agents).filter((a) => a.status !== 'gone');
-    const working = agents.filter((a) => agentLook(a.status).fx === 'none').length + (s.boss.status === 'working' || s.boss.status === 'delegating' ? 1 : 0);
+    const working = workingCount(s);
     return { s, working, need: s.boss.status === 'needs_you' ? 1 : 0, total: agents.length + 1 };
   });
   const sig = JSON.stringify(info.map((i) => [i.s.id, i.s.label, i.s.boss.status, i.working, i.need]));

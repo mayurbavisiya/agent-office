@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startApp, type App } from '../core/app.js';
 import { loadOrCreateConfig } from '../shared/config.js';
+import { isAllowedUrl } from './urlGuard.js';
+import { workingCount } from '../shared/counts.js';
 import { loadWindowState, saveWindowState, type WindowState } from './windowState.js';
 
 const here = fileURLToPath(new URL('.', import.meta.url)); // dist/main/
@@ -18,18 +20,27 @@ let office: App | undefined;
 let token = '';
 let win: BrowserWindow | undefined;
 let tray: Tray | undefined;
+let errorWin: BrowserWindow | undefined;
 let quitting = false;
 let state: WindowState = loadWindowState(stateFile);
 /** the expanded size, restored when leaving compact mode */
 let fullSize = { width: state.width, height: state.height };
-if (state.compact) fullSize = { width: 720, height: 420 };
 
 const log = (...a: unknown[]) => {
   if (process.env.AGENT_OFFICE_DEBUG) console.log('[agent-office]', ...a);
 };
 
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+/** Debounced save (300 ms); flush() writes immediately. */
 function persist(): void {
-  if (!win || win.isDestroyed()) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flush, 300);
+}
+
+function flush(): void {
+  clearTimeout(saveTimer);
+  // never write unless a main window has been created (e.g. not after a failed start)
+  if (!office || !win || win.isDestroyed()) return;
   const b = win.getBounds();
   state = { ...state, x: b.x, y: b.y, width: state.compact ? fullSize.width : b.width, height: state.compact ? fullSize.height : b.height };
   try {
@@ -60,7 +71,7 @@ function createWindow(): void {
     ...size,
     ...(placed ? { x: state.x, y: state.y } : {}),
     minWidth: 360,
-    minHeight: 90,
+    minHeight: state.compact ? 90 : 200,
     frame: false,
     transparent: true,
     alwaysOnTop: state.alwaysOnTop,
@@ -76,7 +87,10 @@ function createWindow(): void {
   win.webContents.on('did-fail-load', (_e, code, desc) => log('did-fail-load', code, desc));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, url) => {
-    if (!url.startsWith(office!.url)) e.preventDefault();
+    if (!isAllowedUrl(url, office!.url)) e.preventDefault();
+  });
+  win.webContents.on('will-redirect', (e, url) => {
+    if (!isAllowedUrl(url, office!.url)) e.preventDefault();
   });
   win.on('close', (e) => {
     if (quitting) return;
@@ -91,13 +105,22 @@ function createWindow(): void {
   win.once('ready-to-show', () => (log('ready', win?.getBounds()), win?.show()));
   void win.loadURL(sceneUrl());
   // debug aid: AGENT_OFFICE_SHOT=<file.png> saves a screenshot of the page 6 s after load
-  if (process.env.AGENT_OFFICE_SHOT) {
+  if (process.env.AGENT_OFFICE_SHOT && !app.isPackaged) {
     const file = process.env.AGENT_OFFICE_SHOT;
-    win.webContents.once('did-finish-load', () => setTimeout(() => void win?.webContents.capturePage().then((img) => writeFileSync(file, img.toPNG())), 6000));
+    win.webContents.once('did-finish-load', () => setTimeout(() => void win?.webContents.capturePage().then((img) => writeFileSync(file, img.toPNG())).catch((e) => log('screenshot failed', e)), 6000));
   }
 }
 
 function showWindow(): void {
+  if (!office) {
+    // no server: only the error window can exist
+    if (errorWin && !errorWin.isDestroyed()) {
+      errorWin.show();
+      errorWin.focus();
+      app.focus({ steal: true });
+    }
+    return;
+  }
   if (!win || win.isDestroyed()) return createWindow();
   win.show();
   win.focus();
@@ -136,13 +159,7 @@ function setOnTop(on: boolean): void {
 
 function agentsWorking(): number {
   if (!office) return 0;
-  let n = 0;
-  for (const s of Object.values(office.store.snapshot().sessions)) {
-    if (s.status === 'ended') continue;
-    if (s.boss.status === 'working' || s.boss.status === 'delegating') n++;
-    for (const a of Object.values(s.agents)) if (a.status === 'working' || a.status === 'spawning' || a.status === 'handing_off') n++;
-  }
-  return n;
+  return Object.values(office.store.snapshot().sessions).reduce((n, s) => n + workingCount(s), 0);
 }
 
 function refreshMenu(): void {
@@ -183,9 +200,12 @@ function createTray(): void {
 
 function showError(message: string): void {
   const w = new BrowserWindow({ width: 440, height: 170, resizable: false, title: 'Agent Office', webPreferences: { sandbox: true, contextIsolation: true } });
-  const esc = message.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
-  const page = `<body style="font:14px system-ui;padding:20px"><h3 style="margin-top:0">Agent Office could not start</h3><p>${esc}</p><p style="color:#666">Another copy may already be running, or another program is using this port. Change the port in ${dataDir}/config.json if needed.</p></body>`;
+  const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+  const page = `<body style="font:14px system-ui;padding:20px"><h3 style="margin-top:0">Agent Office could not start</h3><p>${esc(message)}</p><p style="color:#666">Another copy may already be running, or another program is using this port. Change the port in ${esc(dataDir)}/config.json if needed.</p></body>`;
   void w.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(page)}`);
+  errorWin = w;
+  app.focus({ steal: true });
+  w.focus();
   w.on('closed', () => app.quit());
 }
 
@@ -204,7 +224,7 @@ if (!app.requestSingleInstanceLock()) {
     // stay alive in the tray (the error window quits itself)
   });
   app.on('before-quit', () => {
-    persist();
+    flush();
     quitting = true;
   });
   let closing = false;
