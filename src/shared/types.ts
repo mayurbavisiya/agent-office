@@ -69,6 +69,8 @@ export type Agent = {
   parentId: string | null;
   type: string;
   task?: string;
+  /** Agent tool_input.name (named agents) or teammate name, when known */
+  name?: string;
   status: AgentStatus;
   startedAt: number;
   endedAt?: number;
