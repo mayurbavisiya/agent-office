@@ -10,7 +10,9 @@ import { OfficeStore } from './store.js';
 
 export type App = { url: string; store: OfficeStore; close(): Promise<void> };
 
-type Tracked = { sessionId: string; agentId: string | null; parked: boolean };
+/** `seen`: the session/agent has existed in the store at least once. Only then does its absence mean "pruned"
+ * (a discovered subagent has no store entry until its first delta, so absence alone proves nothing). */
+type Tracked = { sessionId: string; agentId: string | null; seen: boolean };
 
 /** `<repo>/dist/scene`, relative to this file (src/core or dist/core). */
 const defaultStaticDir = () => join(fileURLToPath(new URL('../..', import.meta.url)), 'dist', 'scene');
@@ -23,7 +25,7 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
 
   const store = new OfficeStore();
   const watcher = new LogWatcher();
-  /** every log path ever watched; never watched twice (except re-armed from EOF after a resume) */
+  /** every log path ever watched; never watched twice */
   const tracked = new Map<string, Tracked>();
   /** paths of pruned agents/sessions: never watched again */
   const dropped = new Set<string>();
@@ -33,25 +35,22 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
 
   const watchLog = (sessionId: string, agentId: string | null, path: string | undefined): void => {
     if (!path || tracked.has(path) || dropped.has(path)) return;
-    tracked.set(path, { sessionId, agentId, parked: false });
+    tracked.set(path, { sessionId, agentId, seen: false });
     watcher.watch(sessionId, agentId, path, { fromStart: true });
   };
 
-  /** Unwatch logs of pruned agents/sessions (forever) and of ended sessions (until they revive). */
+  /** Unwatch (forever) the logs of agents and sessions the store has pruned. Ended sessions keep being watched until pruned. */
   const syncWatches = (): void => {
     const sessions = store.snapshot().sessions;
     for (const [path, t] of tracked) {
       const s = sessions[t.sessionId];
-      if (!s || (t.agentId && !s.agents[t.agentId])) {
+      const present = !!s && (!t.agentId || !!s.agents[t.agentId]);
+      if (present) {
+        t.seen = true;
+      } else if (t.seen) {
         watcher.unwatch(path);
         tracked.delete(path);
         dropped.add(path);
-      } else if (s.status === 'ended' && !t.parked) {
-        watcher.unwatch(path);
-        t.parked = true;
-      } else if (s.status === 'active' && t.parked) {
-        t.parked = false;
-        watcher.watch(t.sessionId, t.agentId, path); // from EOF: earlier lines were already counted
       }
     }
   };

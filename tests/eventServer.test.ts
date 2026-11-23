@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, cpSync, appendFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -148,19 +148,94 @@ describe('event server', () => {
 });
 
 describe('startApp', () => {
-  it('watches boss and subagent logs from start and feeds the store', async () => {
+  const FIXLOGS = join(__dirname, 'fixtures/logs/single-subagent');
+  const SID = 'f9e58de5-4a17-4ce3-b430-e3d054dfb702';
+  const AID = 'a1c6ea8b5593d9948';
+
+  async function until(cond: () => boolean, ms = 8000): Promise<void> {
+    const end = Date.now() + ms;
+    while (!cond()) {
+      if (Date.now() > end) throw new Error('timed out waiting for condition');
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
+  const assistantLine = (id: string, out: number) =>
+    JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), gitBranch: 'feat', cwd: '/w/app', message: { id, model: 'claude-sonnet-4-5', role: 'assistant', content: [], usage: { input_tokens: 10, output_tokens: out } } }) + '\n';
+
+  function claudeHome(copyFixture = false): { home: string; proj: string } {
     const home = mkdtempSync(join(tmpdir(), 'ao-claude-'));
-    const cfgDir = mkdtempSync(join(tmpdir(), 'ao-cfg-'));
-    const tp = join(home, 'S2.jsonl');
-    const line = (extra: object) => JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), gitBranch: 'feat', cwd: '/w/app', message: { id: 'm1', model: 'claude-sonnet-4-5', role: 'assistant', content: [], usage: { input_tokens: 10, output_tokens: 5 } }, ...extra }) + '\n';
-    writeFileSync(tp, line({}));
+    const proj = join(home, 'projects', 'slug');
+    mkdirSync(proj, { recursive: true });
+    if (copyFixture) cpSync(FIXLOGS, proj, { recursive: true });
+    return { home, proj };
+  }
+
+  async function bootApp(home: string) {
     const port = await freePort();
-    const app = await startApp({ port, token: TOKEN, claudeDir: home, configDir: cfgDir, staticDir: staticDir() });
+    const app = await startApp({ port, token: TOKEN, claudeDir: home, configDir: mkdtempSync(join(tmpdir(), 'ao-cfg-')), staticDir: staticDir() });
     closers.push(() => app.close());
-    expect(await post(port, JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'S2', cwd: '/w/app', transcript_path: tp }), auth)).toBe(204);
-    await new Promise((r) => setTimeout(r, 1500));
-    const s = app.store.snapshot().sessions.S2!;
-    expect(s.boss.stats.outputTokens).toBe(5);
-    expect(s.branch).toBe('feat');
+    return { port, app };
+  }
+
+  it('(a) discovered session: main and subagent logs replay into the store, even after other store changes', async () => {
+    const { home, proj } = claudeHome(true);
+    // make the subagent log long so its first delta lands well after the main log's (which changes the store first)
+    const subLog = join(proj, SID, 'subagents', `agent-${AID}.jsonl`);
+    writeFileSync(subLog, '{"type":"noise"}\n'.repeat(60000) + readFileSync(subLog, 'utf8'));
+    const { port, app } = await bootApp(home);
+    // unrelated store changes before the subagent's first delta must not drop its log
+    await post(port, JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'OTHER', cwd: '/w/x' }), auth);
+    await post(port, JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'OTHER', cwd: '/w/x' }), auth);
+    await until(() => {
+      const s = app.store.snapshot().sessions[SID];
+      const a = s?.agents[AID];
+      return !!s && s.boss.stats.outputTokens > 0 && !!a && a.stats.outputTokens > 0;
+    });
+    expect(app.store.snapshot().sessions[SID]!.cwd).toBe('/scratch/ao');
+  });
+
+  it('(b) subagent log that appears after SubagentStart is attached', async () => {
+    const { home, proj } = claudeHome();
+    const tp = join(proj, 'S3.jsonl');
+    writeFileSync(tp, assistantLine('b1', 5));
+    const { port, app } = await bootApp(home);
+    const send = (e: object) => post(port, JSON.stringify({ session_id: 'S3', cwd: '/w/app', transcript_path: tp, ...e }), auth);
+    await send({ hook_event_name: 'SessionStart', source: 'startup' });
+    await send({ hook_event_name: 'SubagentStart', agent_id: 'ag1', agent_type: 'general-purpose' });
+    const subDir = join(proj, 'S3', 'subagents');
+    mkdirSync(subDir, { recursive: true });
+    writeFileSync(join(subDir, 'agent-ag1.jsonl'), assistantLine('b2', 77));
+    await until(() => (app.store.snapshot().sessions.S3?.agents.ag1?.stats.outputTokens ?? 0) === 77);
+  });
+
+  it('(c) a line written right before SessionEnd is still counted', async () => {
+    const { home, proj } = claudeHome();
+    const tp = join(proj, 'S4.jsonl');
+    writeFileSync(tp, assistantLine('c1', 5));
+    const { port, app } = await bootApp(home);
+    const send = (e: object) => post(port, JSON.stringify({ session_id: 'S4', cwd: '/w/app', transcript_path: tp, ...e }), auth);
+    await send({ hook_event_name: 'SessionStart', source: 'startup' });
+    await until(() => app.store.snapshot().sessions.S4?.boss.stats.outputTokens === 5);
+    appendFileSync(tp, assistantLine('c2', 7));
+    await send({ hook_event_name: 'SessionEnd', reason: 'other' });
+    await until(() => app.store.snapshot().sessions.S4?.boss.stats.outputTokens === 12);
+    expect(app.store.snapshot().sessions.S4!.status).toBe('ended');
+  });
+
+  it('(d) logs of a pruned session are unwatched', async () => {
+    const { home, proj } = claudeHome();
+    const tp = join(proj, 'S5.jsonl');
+    writeFileSync(tp, assistantLine('d1', 5));
+    const { port, app } = await bootApp(home);
+    const send = (e: object) => post(port, JSON.stringify({ session_id: 'S5', cwd: '/w/app', transcript_path: tp, ...e }), auth);
+    await send({ hook_event_name: 'SessionStart', source: 'startup' });
+    await until(() => app.store.snapshot().sessions.S5?.boss.stats.outputTokens === 5);
+    await send({ hook_event_name: 'SessionEnd', reason: 'other' });
+    app.store.tick(Date.now() + 3 * 3_600_000); // far future: session pruned from the snapshot
+    expect(app.store.snapshot().sessions.S5).toBeUndefined();
+    appendFileSync(tp, assistantLine('d2', 9));
+    await new Promise((r) => setTimeout(r, 2500)); // > 2 poll intervals
+    expect(app.store.snapshot().sessions.S5).toBeUndefined();
   });
 });
