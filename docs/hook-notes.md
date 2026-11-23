@@ -54,7 +54,7 @@ meta `requestShape:"background"`) - seen in the nested run.
 
 ## 4. Teammates and their lead
 
-Not captured as a true team. In headless `-p` with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` there was no
+Not captured as a true team (see "Not captured" below). In headless `-p` with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` there was no
 TeamCreate tool, and the model fell back to an ordinary `Agent` call with `name:"helper"` (see
 `named-agent.jsonl`; `tool_input` keys: description, prompt, model, run_in_background, name). The
 subagent behaves like a normal one (SubagentStart/Stop with agent_id; meta.json has `"name":"helper"`),
@@ -71,8 +71,7 @@ Captured (`clear-resume.jsonl`, via headless `--resume <id>` and `--continue`): 
 Fresh: `"source":"startup"`. Each headless run ends with `SessionEnd` `"reason":"other"`, so a resumed
 session sees SessionEnd then SessionStart(resume) with the same session_id; the session must be
 revived, not duplicated.
-**`/clear` NOT captured** (interactive-only; docs say `source:"clear"`, expected to come with a NEW
-`session_id` and a SessionEnd `reason:"clear"` for the old one). To be verified in the final end-to-end task.
+`/clear`: not captured, see "Not captured" below.
 
 ## 6. Real event order
 
@@ -117,3 +116,12 @@ synthetic `UserPromptSubmit` hand-back and a second `Stop` (empty `background_ta
 - Main log contains the `tool_use` block for `Agent` (`name":"Agent","input":{description,subagent_type,prompt,run_in_background}`,
   `id` = hook `tool_use_id`).
 - Subagent logs have `isSidechain: true`; their meta.json fields are listed in section 2.
+
+## Not captured — verify in E2E (Task 13)
+
+Headless mode cannot produce these; check them in an interactive session in the final end-to-end task:
+1. `/clear`: expected (per docs) `SessionStart` `source:"clear"`, probably with a NEW `session_id` and a
+   `SessionEnd` `reason:"clear"` for the old one. Unverified.
+2. `Notification` events (`message`, `notification_type`, e.g. permission prompts): none fired in headless runs.
+3. Teammate -> lead link for real agent teams: headless fell back to a plain named `Agent` call (section 4).
+   Unverified how a teammate's events reference the lead.
