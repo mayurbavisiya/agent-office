@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -169,4 +169,82 @@ describe('rescan', () => {
     await sleep(250);
     expect(app.store.snapshot().sessions.S1!.boss.status).toBe('needs_you');
   });
+
+  it('closing the last registry session ends it and does not revive old logs', async () => {
+    const h = home();
+    const child = spawnSleeper();
+    h.register(child.pid!, 'LAST');
+    const { app } = await boot(h.dir);
+    // a recent main log of a session that is not running (in the mtime window, not in the registry)
+    writeFileSync(join(h.proj, 'DEAD.jsonl'), line({ type: 'user' }));
+    expect(Object.keys(app.store.snapshot().sessions)).toEqual(['LAST']);
+    child.kill();
+    unlinkSync(join(h.dir, 'sessions', `${child.pid}.json`));
+    await until(() => app.store.snapshot().sessions.LAST?.status === 'ended');
+    await sleep(250);
+    expect(Object.keys(app.store.snapshot().sessions)).toEqual(['LAST']);
+    // the sessions dir disappearing later does not switch to the mtime scan either
+    rmSync(join(h.dir, 'sessions'), { recursive: true });
+    await sleep(250);
+    expect(Object.keys(app.store.snapshot().sessions)).toEqual(['LAST']);
+  });
+
+  it('a corrupt registry read does not end a live session', async () => {
+    const h = home();
+    h.register(process.pid, 'S1', { status: 'busy' });
+    const { app, events } = await boot(h.dir);
+    expect(app.store.snapshot().sessions.S1?.boss.status).toBe('working');
+    writeFileSync(join(h.dir, 'sessions', `${process.pid}.json`), '{"pid":');
+    await sleep(250);
+    h.register(process.pid, 'S1', { status: 'busy' });
+    await sleep(250);
+    const s = app.store.snapshot().sessions.S1!;
+    expect(s.status).toBe('active');
+    expect(s.boss.status).toBe('working');
+    expect(events.filter((e) => e.kind === 'session_ended' || e.kind === 'session_started')).toEqual([]);
+  });
+
+  it('a changed sessionId whose old room is gone starts a new room without taking over another', async () => {
+    const h = home();
+    h.register(process.pid, 'OLD', { status: 'idle' });
+    h.register(process.ppid, 'OTHER', { status: 'idle' });
+    const { app, events } = await boot(h.dir);
+    // OLD's room ends and is pruned; OTHER stays an idle room in the same cwd
+    app.store.applyHook({ hook_event_name: 'SessionEnd', session_id: 'OLD', reason: 'other' }, Date.now());
+    app.store.tick(Date.now() + 61_000);
+    expect(Object.keys(app.store.snapshot().sessions)).toEqual(['OTHER']);
+    h.register(process.pid, 'NEW', { status: 'idle', formerNames: [{ sessionId: 'OLD' }] });
+    await until(() => !!app.store.snapshot().sessions.NEW);
+    expect(Object.keys(app.store.snapshot().sessions).sort()).toEqual(['NEW', 'OTHER']);
+    expect(events.some((e) => e.kind === 'shift_change')).toBe(false);
+  });
+
+  it('a busy registry session that /clears keeps a working boss', async () => {
+    const h = home();
+    h.register(process.pid, 'OLD', { status: 'idle' });
+    const { app } = await boot(h.dir);
+    h.register(process.pid, 'NEW', { status: 'busy', formerNames: [{ sessionId: 'OLD' }] });
+    await until(() => !!app.store.snapshot().sessions.NEW);
+    expect(Object.keys(app.store.snapshot().sessions)).toEqual(['NEW']);
+    expect(app.store.snapshot().sessions.NEW.boss.status).toBe('working');
+  });
+
+  it('a room restarted from the registry watches its log again even after it was pruned', async () => {
+    const h = home();
+    const child = spawnSleeper();
+    h.register(child.pid!, 'RES');
+    const { app } = await boot(h.dir);
+    const log = join(h.proj, 'RES.jsonl');
+    expect(app.watchedPaths()).toContain(log);
+    child.kill();
+    await until(() => app.store.snapshot().sessions.RES?.status === 'ended');
+    app.store.tick(Date.now() + 61_000);
+    expect(app.store.snapshot().sessions.RES).toBeUndefined();
+    expect(app.watchedPaths()).not.toContain(log);
+    // resumed in a new process with the same session id
+    h.register(process.pid, 'RES');
+    await until(() => app.store.snapshot().sessions.RES?.status === 'active');
+    await until(() => app.watchedPaths().includes(log));
+  });
 });
+

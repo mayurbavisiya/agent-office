@@ -6,7 +6,10 @@ import { startEventServer } from '../server/eventServer.js';
 import {
   discoverActiveSessions,
   findMainLog,
+  forgetPid,
   listSubagentFiles,
+  pidAlive,
+  procStartMatches,
   readMeta,
   readRegistry,
   recentMainLogs,
@@ -26,7 +29,7 @@ export type App = { url: string; store: OfficeStore; watchedPaths(): string[]; c
 type Tracked = { sessionId: string; agentId: string | null; seen: boolean };
 
 /** What the rescan last saw of a session it reconciles. */
-type Known = { pid?: number; status?: 'busy' | 'idle'; name?: string };
+type Known = { pid?: number; procStart?: string; status?: 'busy' | 'idle'; name?: string };
 /** A subagent log the rescan has seen: `finished` per meta.json; `typed` once meta gave type/description. */
 type KnownAgent = { finished: boolean; typed: boolean };
 
@@ -105,21 +108,27 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
     watchLog(sessionId, agentId, path);
   };
 
-  /** A new running session: room (unless hooks already made one), name, log watches, unfinished subagents. */
-  const addSession = (d: DiscoveredSession): void => {
-    known.set(d.sessionId, { pid: d.pid, status: d.registryStatus, name: d.name });
+  /**
+   * A new running session: room (unless hooks already made one), name, log watches, unfinished subagents.
+   * `started`: the caller already started its room (a /clear takeover).
+   */
+  const addSession = (d: DiscoveredSession, started = false): void => {
+    known.set(d.sessionId, { pid: d.pid, procStart: d.procStart, status: d.registryStatus, name: d.name });
     if (d.pid !== undefined) pids.set(d.pid, d.sessionId);
     const now = Date.now();
     const cur = store.snapshot().sessions[d.sessionId];
     // a live process whose room already ended (e.g. resumed in a new process) gets it back
     if (!cur || (cur.status === 'ended' && d.pid !== undefined)) {
       synth({ hook_event_name: 'SessionStart', source: 'discovered', session_id: d.sessionId, cwd: d.cwd });
-      if (d.registryStatus === 'busy' && !hookSessions.has(d.sessionId)) synth({ hook_event_name: 'UserPromptSubmit', session_id: d.sessionId });
+      started = true;
     }
+    if (started && d.registryStatus === 'busy' && !hookSessions.has(d.sessionId)) synth({ hook_event_name: 'UserPromptSubmit', session_id: d.sessionId });
     if (d.pid !== undefined) store.markLive(d.sessionId, now);
     store.setName(d.sessionId, d.name);
     if (d.mainLog) {
       if (!transcripts.has(d.sessionId)) transcripts.set(d.sessionId, d.mainLog);
+      // a (re)started room watches its log even if an earlier prune dropped the path
+      if (started) dropped.delete(d.mainLog);
       watchLog(d.sessionId, null, d.mainLog);
     }
     for (const a of d.subagentLogs) seedAgent(d.sessionId, a.agentId, a.path, a);
@@ -166,10 +175,15 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
     }
   };
 
+  let registrySeen = readRegistry(cdir) !== null;
+
   /** Re-reads the session registry (or the mtime window without one) and reconciles the store with it. Never throws. */
   const rescan = (): void => {
     try {
-      const reg = readRegistry(cdir);
+      // once a registry was seen, its later absence means "no sessions", never the mtime fallback
+      const found = readRegistry(cdir);
+      if (found) registrySeen = true;
+      const reg = found ?? (registrySeen ? [] : null);
       if (!reg) {
         for (const l of recentMainLogs(cdir, Date.now())) if (!known.has(l.sessionId)) addSession(sessionFromLog(l.sessionId, l.mainLog));
       } else {
@@ -182,18 +196,25 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
             const prev = pids.get(r.pid);
             const old = prev !== undefined && prev !== r.sessionId ? prev : r.formerSessionIds.find((id) => known.has(id));
             const d = sessionFromRegistry(cdir, r);
+            let started = false;
             if (old) {
               // same process, new session id: /clear. End first, so the store's takeover sees an ended room
-              // in this cwd and turns the start into a shift change instead of a second room.
+              // in this cwd and turns the start into a shift change instead of a second room. Without the
+              // old room there is nothing to hand over: a plain discovered start (a 'clear' start would take
+              // over some other idle room in the cwd).
               const cur = store.snapshot().sessions;
               known.delete(old);
               if (cur[old]?.status === 'active') synth({ hook_event_name: 'SessionEnd', session_id: old, reason: 'clear' });
-              if (!cur[r.sessionId]) synth({ hook_event_name: 'SessionStart', source: 'clear', session_id: r.sessionId, cwd: d.cwd ?? cur[old]?.cwd });
+              if (!cur[r.sessionId]) {
+                synth({ hook_event_name: 'SessionStart', source: cur[old] ? 'clear' : 'discovered', session_id: r.sessionId, cwd: d.cwd ?? cur[old]?.cwd });
+                started = true;
+              }
             }
-            addSession(d);
+            addSession(d, started);
             continue;
           }
           store.markLive(r.sessionId, now);
+          if (r.procStart) k.procStart = r.procStart;
           if (k.pid !== r.pid) {
             if (k.pid !== undefined && pids.get(k.pid) === r.sessionId) pids.delete(k.pid);
             k.pid = r.pid;
@@ -220,6 +241,12 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
         }
         for (const [pid, sid] of pids) {
           if (live.has(pid)) continue;
+          // missing from this read: end only if the process is really gone (a half-written file is skipped
+          // by readRegistry), or the pid now belongs to another process
+          const alive = pidAlive(pid);
+          if (!alive) forgetPid(pid);
+          const ps = known.get(sid)?.procStart;
+          if (alive && !(ps && !procStartMatches(pid, ps, true))) continue;
           pids.delete(pid);
           known.delete(sid);
           if (store.snapshot().sessions[sid]?.status === 'active') synth({ hook_event_name: 'SessionEnd', session_id: sid, reason: 'other' });

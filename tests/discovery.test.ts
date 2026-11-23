@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { cpSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverActiveSessions, subagentLogPath } from '../src/core/discovery.js';
+import { discoverActiveSessions, startTimesMatch, subagentLogPath } from '../src/core/discovery.js';
 import { claudeDir } from '../src/shared/config.js';
 
 const FIX = join(__dirname, 'fixtures/logs');
@@ -133,10 +133,20 @@ describe('discoverActiveSessions', () => {
     const r = discoverActiveSessions(build(), NOW);
     expect(r.map((s) => s.sessionId)).toEqual([S1]);
     expect(r[0].name).toBeUndefined();
-    // an empty sessions dir (no readable entries) also falls back
+    // a sessions dir that exists, even empty or unreadable, is the registry: no running sessions
     mkdirSync(join(root, 'sessions'));
     writeFileSync(join(root, 'sessions', 'x.json'), 'nope');
-    expect(discoverActiveSessions(root, NOW).map((s) => s.sessionId)).toEqual([S1]);
+    expect(discoverActiveSessions(root, NOW)).toEqual([]);
+  });
+
+  it('startTimesMatch compares parsed start times within 2 s and fails open', () => {
+    expect(startTimesMatch('Fri Nov 13 06:40:01 2026', 'Fri Nov 13 06:40:01 2026')).toBe(true);
+    expect(startTimesMatch('Mon Nov  3 06:40:01 2026   ', 'Mon Nov 3 06:40:02 2026')).toBe(true);
+    expect(startTimesMatch('Fri Nov 13 06:40:01 2026', 'Fri Nov 13 07:40:01 2026')).toBe(false);
+    expect(startTimesMatch('Fri Nov 13 06:40:01 2026', 'Fri Nov 13 06:40:05 2026')).toBe(false);
+    expect(startTimesMatch('Fri Nov 13 06:40:01 2026', 'garbage')).toBe(true);
+    expect(startTimesMatch('', 'Fri Nov 13 06:40:01 2026')).toBe(true);
+    expect(startTimesMatch(undefined, 'Fri Nov 13 06:40:01 2026')).toBe(true);
   });
 
   it('subagentLogPath derives from the transcript path', () => {

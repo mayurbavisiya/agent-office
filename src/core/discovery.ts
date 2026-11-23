@@ -25,6 +25,7 @@ export type DiscoveredSession = {
   registryStatus?: 'busy' | 'idle';
   /** earlier session ids of the same process (formerNames[].sessionId), e.g. before /clear */
   formerSessionIds?: string[];
+  procStart?: string;
 };
 
 /** One live `$CLAUDE_DIR/sessions/<pid>.json` entry. Internal/undocumented format: every field optional. */
@@ -34,6 +35,7 @@ export type RegistryEntry = {
   cwd?: string;
   name?: string;
   status?: 'busy' | 'idle';
+  procStart?: string;
   formerSessionIds: string[];
 };
 
@@ -108,32 +110,51 @@ function psStart(pid: number, tz?: string): string | undefined {
 }
 
 /**
- * PID-reuse guard: does the process's start time match the registry's `procStart`? Claude Code writes
- * procStart in UTC (`ps -o lstart` format); local time is accepted too. If ps fails, the pid check is trusted.
- * Cached per pid+procStart for the process lifetime.
+ * Two `ps -o lstart` style start times (any spacing) within 2 s of each other. Fails open (true) when
+ * either side is missing or unparseable: the pid check alone is then trusted.
  */
-export function procStartMatches(pid: number, procStart: string): boolean {
+export function startTimesMatch(psOut: string | undefined, procStart: string): boolean {
+  const a = Date.parse(norm(psOut ?? ''));
+  const b = Date.parse(norm(procStart));
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return true;
+  return Math.abs(a - b) <= 2000;
+}
+
+/**
+ * PID-reuse guard: does the process's start time match the registry's `procStart`? Claude Code writes
+ * procStart in UTC (`ps -o lstart` format); local time is accepted too. If ps fails or a value does not
+ * parse, the pid check is trusted. Cached per pid+procStart; `fresh` re-checks (and refreshes the cache).
+ */
+export function procStartMatches(pid: number, procStart: string, fresh = false): boolean {
   const key = `${pid}|${procStart}`;
-  const hit = startCache.get(key);
+  const hit = fresh ? undefined : startCache.get(key);
   if (hit !== undefined) return hit;
-  const want = norm(procStart);
-  const utc = psStart(pid, 'UTC');
-  let ok: boolean;
-  if (utc === undefined) ok = true;
-  else ok = utc === want || psStart(pid) === want;
+  const ok = startTimesMatch(psStart(pid, 'UTC'), procStart) || startTimesMatch(psStart(pid), procStart);
   startCache.set(key, ok);
   return ok;
 }
 
+/** Drops cached start-time checks for a pid (it died, so a reuse must be re-checked). */
+export function forgetPid(pid: number): void {
+  const prefix = `${pid}|`;
+  for (const k of startCache.keys()) if (k.startsWith(prefix)) startCache.delete(k);
+}
+
 /**
  * Live interactive entries of `$CLAUDE_DIR/sessions/*.json` (never the `.key` files).
- * Returns null when the dir is missing or has no readable entries (callers then fall back to the mtime scan).
+ * Returns null only when the dir is missing (callers then fall back to the mtime scan); an existing dir with
+ * no readable entries is an empty registry. An entry that fails to parse is skipped (it may be half-written).
  */
 export function readRegistry(claudeDir: string): RegistryEntry[] | null {
   const dir = join(claudeDir, 'sessions');
-  let readable = 0;
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return null;
+  }
   const out: RegistryEntry[] = [];
-  for (const f of safeReaddir(dir)) {
+  for (const f of files) {
     if (!f.endsWith('.json')) continue;
     try {
       const o: unknown = JSON.parse(readFileSync(join(dir, f), 'utf8'));
@@ -142,11 +163,15 @@ export function readRegistry(claudeDir: string): RegistryEntry[] | null {
       const pid = m.pid;
       const sessionId = m.sessionId;
       if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0 || typeof sessionId !== 'string' || !sessionId) continue;
-      readable++;
       if (m.kind !== undefined && m.kind !== 'interactive') continue;
-      if (!pidAlive(pid)) continue;
-      if (typeof m.procStart === 'string' && m.procStart && !procStartMatches(pid, m.procStart)) continue;
+      if (!pidAlive(pid)) {
+        forgetPid(pid);
+        continue;
+      }
+      const procStart = typeof m.procStart === 'string' && m.procStart ? m.procStart : undefined;
+      if (procStart && !procStartMatches(pid, procStart)) continue;
       const e: RegistryEntry = { pid, sessionId, formerSessionIds: [] };
+      if (procStart) e.procStart = procStart;
       if (typeof m.cwd === 'string' && m.cwd) e.cwd = m.cwd;
       if (typeof m.name === 'string' && m.name) e.name = m.name;
       if (m.status === 'busy' || m.status === 'idle') e.status = m.status;
@@ -161,7 +186,7 @@ export function readRegistry(claudeDir: string): RegistryEntry[] | null {
       // unreadable or garbage: skip
     }
   }
-  return readable ? out : null;
+  return out;
 }
 
 /** `<sessionId>.jsonl` in any project dir; tries the slug derived from cwd first. */
@@ -194,6 +219,7 @@ export function sessionFromRegistry(claudeDir: string, r: RegistryEntry): Discov
   if (cwd) s.cwd = cwd;
   if (r.name) s.name = r.name;
   if (r.status) s.registryStatus = r.status;
+  if (r.procStart) s.procStart = r.procStart;
   return s;
 }
 
@@ -240,7 +266,7 @@ function findCwd(file: string): string | undefined {
 
 /**
  * Every running session: from the session registry when it exists (all live interactive entries, whatever
- * their log age), else main logs modified within `windowMs`.
+ * their log age; none when the sessions dir exists but is empty), else main logs modified within `windowMs`.
  */
 export function discoverActiveSessions(claudeDir: string, now: number, windowMs = 600_000): DiscoveredSession[] {
   const reg = readRegistry(claudeDir);
