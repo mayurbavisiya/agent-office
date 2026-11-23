@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { planAnimations, DURATIONS } from '../src/scene/animator.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { planAnimations, DURATIONS, tween, cancelAnimation } from '../src/scene/animator.js';
 import type { Agent, OfficeState, Session } from '../src/shared/types.js';
 
 const stats = () => ({ inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, tools: {}, files: [], recent: [], lastActivity: 0 });
@@ -98,5 +98,44 @@ describe('planAnimations', () => {
       st,
     );
     expect(steps.map((s) => s.kind)).toEqual(['enter_door', 'walk_to_desk', 'walk_to', 'give', 'celebrate']);
+  });
+});
+
+describe('tween (Web Animations runner)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** An element whose animations never finish: a hidden tab / throttled webview stalls the timeline. */
+  function stalled() {
+    const anim = { finished: new Promise<never>(() => {}), playState: 'running', cancel: vi.fn() };
+    const el = { animate: vi.fn(() => anim), style: {} as Record<string, string> };
+    return { anim, el };
+  }
+
+  it('commits the last keyframe when the timeline stalls and the safety timeout fires', async () => {
+    vi.useFakeTimers();
+    const { anim, el } = stalled();
+    const running = new Set<Animation>();
+    const p = tween({ q: { running }, reduced: false }, el as unknown as Element, [
+      { transform: 'translate(300px, -80px)', opacity: 0 },
+      { transform: 'translate(0px, 0px)', opacity: 1 },
+    ], 2000);
+    await vi.advanceTimersByTimeAsync(3100);
+    await expect(p).resolves.toBe(true);
+    expect(el.style.transform).toBe('translate(0px, 0px)');
+    expect(el.style.opacity).toBe('1');
+    expect(anim.cancel).toHaveBeenCalled();
+    expect(running.size).toBe(0);
+  });
+
+  it('discards the end state after an explicit cancel', async () => {
+    vi.useFakeTimers();
+    const { anim, el } = stalled();
+    el.style.opacity = '1';
+    const running = new Set<Animation>();
+    const p = tween({ q: { running }, reduced: false }, el as unknown as Element, [{ opacity: 1 }, { opacity: 0 }], 600);
+    cancelAnimation(anim as unknown as Animation);
+    await vi.advanceTimersByTimeAsync(1700);
+    await expect(p).resolves.toBe(false);
+    expect(el.style.opacity).toBe('1');
   });
 });

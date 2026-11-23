@@ -80,7 +80,7 @@ const WS_LEFT = 21;
 const WS_RIGHT = 84;
 
 /** Visible agents in seating order: depth-first by start time, so helpers sit right after their parent. */
-function seatingOrder(session: Session): { id: string; depth: number }[] {
+function seatingOrder(session: Session): { id: string; depth: number; parent: string | null }[] {
   const visible = Object.values(session.agents).filter((a) => a.status !== 'gone');
   const ids = new Set(visible.map((a) => a.id));
   const byStart = (a: Agent, b: Agent) => a.startedAt - b.startedAt || (a.id < b.id ? -1 : 1);
@@ -91,27 +91,37 @@ function seatingOrder(session: Session): { id: string; depth: number }[] {
     list.push(a);
     kids.set(p, list);
   }
-  const out: { id: string; depth: number }[] = [];
+  const out: { id: string; depth: number; parent: string | null }[] = [];
   const seen = new Set<string>();
   const walk = (parent: string | null, depth: number) => {
     for (const a of (kids.get(parent) ?? []).sort(byStart)) {
       if (seen.has(a.id)) continue;
       seen.add(a.id);
-      out.push({ id: a.id, depth });
+      out.push({ id: a.id, depth, parent });
       walk(a.id, depth + 1);
     }
   };
   walk(null, 0);
   // parent cycles (shouldn't happen) leave agents unreached; seat them top-level
-  for (const a of visible.sort(byStart)) if (!seen.has(a.id)) out.push({ id: a.id, depth: 0 });
+  for (const a of visible.sort(byStart)) if (!seen.has(a.id)) out.push({ id: a.id, depth: 0, parent: null });
   return out;
 }
 
+export type SeatOpts = {
+  /** parent agent id per agent (helpers cluster around their parent) */
+  parentOf?: Record<string, string | null | undefined>;
+  /** grid columns, for the distance between slots (row-major: slot i is at column i % cols) */
+  cols?: number;
+};
+
 /**
- * Sticky desk assignment. Agents in `prev` that are still in `order` keep their slot; new agents,
- * taken in `order`, get the lowest free slot. Agents missing from `order` free their slot.
+ * Sticky desk assignment. Agents in `prev` that are still in `order` keep their slot; agents
+ * missing from `order` free theirs. New agents are taken in `order`: a helper whose parent has a
+ * slot gets the free slot nearest the parent's (grid distance, ties to the lower index); anyone
+ * else gets the lowest free slot.
  */
-export function assignSeats(order: string[], prev: Record<string, number> = {}): Record<string, number> {
+export function assignSeats(order: string[], prev: Record<string, number> = {}, opts: SeatOpts = {}): Record<string, number> {
+  const cols = Math.max(1, Math.floor(opts.cols ?? 1));
   const out: Record<string, number> = {};
   const taken = new Set<number>();
   for (const id of order) {
@@ -124,11 +134,40 @@ export function assignSeats(order: string[], prev: Record<string, number> = {}):
   let next = 0;
   for (const id of order) {
     if (id in out) continue;
-    while (taken.has(next)) next++;
-    out[id] = next;
-    taken.add(next);
+    const parent = opts.parentOf?.[id];
+    const ps = parent != null ? out[parent] : undefined;
+    let slot: number;
+    if (ps !== undefined) {
+      // candidates: every free slot up to one full row past the furthest taken one
+      const limit = Math.max(ps, ...taken) + cols + 1;
+      const pr = Math.floor(ps / cols);
+      const pc = ps % cols;
+      slot = -1;
+      let best = Infinity;
+      for (let i = 0; i <= limit; i++) {
+        if (taken.has(i)) continue;
+        const d = (Math.floor(i / cols) - pr) ** 2 + ((i % cols) - pc) ** 2;
+        if (d < best) {
+          best = d;
+          slot = i;
+        }
+      }
+    } else {
+      while (taken.has(next)) next++;
+      slot = next;
+    }
+    out[id] = slot;
+    taken.add(slot);
   }
   return out;
+}
+
+/**
+ * Sessions that get a room on the floor: all of them, except ended sessions whose fade-out has
+ * finished (`faded`). A faded session that becomes active again gets its room back.
+ */
+export function visibleSessions<S extends Pick<Session, 'id' | 'status'>>(sessions: S[], faded: ReadonlySet<string>): S[] {
+  return sessions.filter((s) => !(s.status === 'ended' && faded.has(s.id)));
 }
 
 /**
@@ -147,32 +186,43 @@ export function roomLayout(session: Session, rect: Rect, prevSlots?: Record<stri
   const door = { x: doorRect.x + dw / 2, y: Math.min(h - 10, wallH + 16) };
 
   const order = seatingOrder(session);
-  const slots = assignSeats(order.map((o) => o.id), prevSlots);
-  // grid cells needed: up to the highest occupied slot (free desks in between stay put)
-  const n = order.length ? Math.max(...Object.values(slots)) + 1 : 0;
+  const ids = order.map((o) => o.id);
+  const parentOf = Object.fromEntries(order.map((o) => [o.id, o.parent]));
   const x0 = bossW + 12;
   const x1 = w - 10;
   const aw = x1 - x0;
 
   // big rooms get bigger figures; crowded rooms shrink them down to 0.4
   const sMax = Math.round(clamp(Math.min(w / 700, h / 400), 0.7, 1) * 20) / 20;
-  let scale = sMax;
-  let cols = 1;
-  let rows = 1;
-  let slotW = 0;
-  let slotH = 0;
-  let yMin = 0;
-  let yMax = 0;
-  for (let s = sMax; s >= 0.4 - 1e-9; s -= 0.05) {
-    scale = Math.round(s * 100) / 100;
-    slotW = Math.max(115 * scale, 92);
-    slotH = 94 * scale + TAG_H + 8;
-    yMin = Math.max(wallH + 6, 6 + SIGN_H + 6 + TAG_H + HEAD_TOP * scale);
-    yMax = h - DESK_BOTTOM * scale - 6;
-    cols = Math.max(1, Math.floor(aw / slotW));
-    rows = yMax >= yMin ? Math.floor((yMax - yMin) / slotH) + 1 : 1;
-    if (cols * rows >= n) break;
+  const fit = (cells: number) => {
+    let g = { scale: sMax, cols: 1, rows: 1, slotW: 0, slotH: 0, yMin: 0, yMax: 0 };
+    for (let s = sMax; s >= 0.4 - 1e-9; s -= 0.05) {
+      const scale = Math.round(s * 100) / 100;
+      const slotW = Math.max(115 * scale, 92);
+      const slotH = 94 * scale + TAG_H + 8;
+      const yMin = Math.max(wallH + 6, 6 + SIGN_H + 6 + TAG_H + HEAD_TOP * scale);
+      const yMax = h - DESK_BOTTOM * scale - 6;
+      const cols = Math.max(1, Math.floor(aw / slotW));
+      const rows = yMax >= yMin ? Math.floor((yMax - yMin) / slotH) + 1 : 1;
+      g = { scale, cols, rows, slotW, slotH, yMin, yMax };
+      if (cols * rows >= cells) break;
+    }
+    return g;
+  };
+  // grid cells needed: up to the highest occupied slot (free desks in between stay put)
+  const cellsFor = (sl: Record<string, number>) => (ids.length ? Math.max(...Object.values(sl)) + 1 : 0);
+  // helpers' "nearest free slot" needs the column count, which depends on the cell count: assign
+  // with an estimate, and once more if the final grid has a different number of columns
+  const est = fit(ids.length);
+  let slots = assignSeats(ids, prevSlots, { parentOf, cols: est.cols });
+  let g = fit(cellsFor(slots));
+  if (g.cols !== est.cols) {
+    slots = assignSeats(ids, prevSlots, { parentOf, cols: g.cols });
+    g = fit(cellsFor(slots));
   }
+  const n = cellsFor(slots);
+  const { scale, yMin, yMax } = g;
+  let { cols, rows, slotW, slotH } = g;
   const seats: Record<string, Seat> = {};
   const crowded = cols * rows < n;
   if (!crowded) {

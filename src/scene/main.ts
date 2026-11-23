@@ -2,7 +2,7 @@
 import type { ServerMessage } from '../shared/types.js';
 import { Floor } from './floor.js';
 import { tickTimers } from './characters.js';
-import { animStats, planAnimations, runAnimations } from './animator.js';
+import { animStats, planAnimations, ROOM_FADED_EVENT, runAnimations } from './animator.js';
 
 const viewport = document.getElementById('floor') as HTMLElement;
 const svg = document.getElementById('office') as unknown as SVGSVGElement;
@@ -37,8 +37,7 @@ function connect(): void {
     // queue first (marks departing characters so this render keeps them), then render; queued
     // steps start on a microtask, after the render and before the next paint
     if (msg.type === 'events' && Array.isArray(msg.events)) runAnimations(planAnimations(msg.events, msg.state), svg);
-    floor.render(msg.state);
-    empty.hidden = Object.keys(msg.state.sessions).length > 0;
+    empty.hidden = floor.render(msg.state) > 0;
   };
   ws.onclose = () => {
     conn.hidden = false;
@@ -46,6 +45,14 @@ function connect(): void {
     delay = Math.min(delay * 2, 5000);
   };
 }
+
+// an ended room leaves the floor once its fade-out completes
+svg.addEventListener(ROOM_FADED_EVENT, (e) => {
+  const sid = (e as CustomEvent<{ sessionId: string }>).detail?.sessionId;
+  if (!sid) return;
+  floor.hideEnded(sid);
+  draw();
+});
 
 let pending = 0;
 new ResizeObserver(() => {

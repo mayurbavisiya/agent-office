@@ -38,6 +38,12 @@ export type AnimStep = { agentId: string; sessionId: string; kind: AnimKind; tar
 
 export const ROOM_ACTOR = '';
 
+/**
+ * Dispatched on the svg root (detail: { sessionId }) when an ended room's fade-out completes;
+ * the floor then drops the room while its session stays ended (see layout.visibleSessions).
+ */
+export const ROOM_FADED_EVENT = 'agentoffice:room-faded';
+
 export const DURATIONS: Record<AnimKind, number> = {
   enter_door: 1200,
   walk_to_desk: 2000,
@@ -149,8 +155,15 @@ function cancelQueue(svg: SVGSVGElement, sessionId: string, agentId: string): vo
   if (!q) return;
   animStats.cancelled += q.items.length + q.running.size;
   q.items = [];
-  for (const a of q.running) a.cancel();
+  for (const a of q.running) cancelAnimation(a);
   q.running.clear();
+}
+
+const cancelledAnims = new WeakSet<Animation>();
+/** Explicit cancellation: the step's end state is discarded (unlike a timeout, see tween). */
+export function cancelAnimation(a: Animation): void {
+  cancelledAnims.add(a);
+  a.cancel();
 }
 
 function pump(k: string, svg: SVGSVGElement): void {
@@ -188,22 +201,31 @@ function done(a: Animation, ms: number): Promise<void> {
   return Promise.race([a.finished.then(() => undefined, () => undefined), new Promise<void>((r) => setTimeout(r, ms + 1000))]);
 }
 
-type Ctx = { q: Queue; reduced: boolean };
+type Ctx = { q: Pick<Queue, 'running'>; reduced: boolean };
 
-/** Runs an animation tracked by the queue (so it can be cancelled), keeps its end state as inline style. */
-async function animate(ctx: Ctx, el: Element, kf: Keyframe[], ms: number, easing = 'ease-in-out', keep = true): Promise<void> {
+/**
+ * Runs an animation tracked by the queue (so it can be cancelled) and keeps its last keyframe as
+ * inline style. The end state is committed when the animation finishes AND when the safety timeout
+ * fires first (a hidden tab or throttled webview stalls the timeline), so a character never stays
+ * invisible or half-way; it is discarded only after an explicit cancelAnimation.
+ * Resolves false when cancelled.
+ */
+export async function tween(ctx: Ctx, el: Element, kf: Keyframe[], ms: number, easing = 'ease-in-out', keep = true): Promise<boolean> {
   const a = el.animate(kf, { duration: ms, easing, fill: 'forwards' });
   ctx.q.running.add(a);
   await done(a, ms);
   ctx.q.running.delete(a);
-  if (keep && a.playState === 'finished') {
+  const cancelled = cancelledAnims.has(a);
+  if (keep && !cancelled) {
     const last = kf[kf.length - 1];
     const st = (el as SVGElement).style;
     if (last.transform !== undefined) st.transform = String(last.transform);
     if (last.opacity !== undefined) st.opacity = String(last.opacity);
   }
-  a.cancel();
+  if (!cancelled) a.cancel();
+  return !cancelled;
 }
+const animate = tween;
 
 /** Fire-and-forget overlay animation; removes `remove` (default: the element) when done. */
 function flourish(el: SVGElement, kf: Keyframe[], ms: number, opts: KeyframeAnimationOptions = {}, remove: Element = el): void {
@@ -305,8 +327,10 @@ async function play(step: AnimStep, svg: SVGSVGElement, q: Queue): Promise<boole
     return true;
   }
   if (step.kind === 'fade_out_room') {
-    // ended rooms stay on the floor (dimmed) until pruned; fade them back a little
-    await animate(ctx, room, [{ opacity: 1 }, { opacity: 0.75 }], ms, 'ease-in');
+    // fade the ended room out (at once under reduced motion), then tell the floor to drop it;
+    // a revival (fade_in_room / shift_change) cancels this and keeps the room
+    const ok = await animate(ctx, room, [{ opacity: 1 }, { opacity: 0 }], ctx.reduced ? 0 : ms, 'ease-in');
+    if (ok) svg.dispatchEvent(new CustomEvent(ROOM_FADED_EVENT, { detail: { sessionId: step.sessionId } }));
     return true;
   }
 

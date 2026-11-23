@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { layoutRooms, roomLayout, handoffTarget, assignSeats, MIN_ROOM_W, MIN_ROOM_H } from '../src/scene/layout.js';
+import { layoutRooms, roomLayout, handoffTarget, assignSeats, visibleSessions, MIN_ROOM_W, MIN_ROOM_H } from '../src/scene/layout.js';
 import type { Agent, Session } from '../src/shared/types.js';
 
 const stats = () => ({ inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, tools: {}, files: [], recent: [], lastActivity: 0 });
@@ -147,6 +147,35 @@ describe('roomLayout', () => {
     expect({ x: third.seats.d.x, y: third.seats.d.y }).toEqual({ x: bSeat.x, y: bSeat.y });
     expect(third.seats.a).toEqual(first.seats.a);
     expect(third.seats.c).toEqual(first.seats.c);
+  });
+
+  it('a new helper takes the free slot nearest its parent', () => {
+    // 3 columns; parent p at slot 5 (row 1, col 2); free: 1, 2, 3, 4, ...
+    // h (helper of p) takes 2 (directly above p; ties with 4 go to the lower index), t (top-level) the first free, 1
+    expect(assignSeats(['a', 'p', 'h', 't'], { a: 0, p: 5 }, { parentOf: { h: 'p', t: null }, cols: 3 })).toEqual({ a: 0, p: 5, h: 2, t: 1 });
+    // a helper whose parent has no slot falls back to the first free slot
+    expect(assignSeats(['h'], {}, { parentOf: { h: 'missing' }, cols: 3 })).toEqual({ h: 0 });
+
+    // in a room: a leaves (slot 0 frees up), then p's new helper sits right next to p, not at slot 0
+    const big = { x: 0, y: 0, w: 900, h: 400 };
+    const first = roomLayout(session([agent('a', null, 1), agent('b', null, 2), agent('p', null, 3)]), big);
+    expect(first.slots).toEqual({ a: 0, b: 1, p: 2 });
+    const second = roomLayout(session([agent('a', null, 1, 'gone'), agent('b', null, 2), agent('p', null, 3), agent('h', 'p', 4)]), big, first.slots);
+    expect(second.slots.h).toBe(3);
+    expect(second.seats.h.y).toBe(second.seats.p.y);
+    expect(second.seats.h.x - second.seats.p.x).toBeCloseTo(second.slotW, 0);
+    expect(second.seats.p).toEqual(first.seats.p);
+  });
+
+  it('ended rooms are excluded after their fade-out', () => {
+    const s = (id: string, status: 'active' | 'ended') => ({ id, status });
+    const all = [s('live', 'active'), s('ending', 'ended'), s('gone', 'ended')];
+    // ended but still fading out: keeps its room
+    expect(visibleSessions(all, new Set()).map((x) => x.id)).toEqual(['live', 'ending', 'gone']);
+    // fade-out done: excluded
+    expect(visibleSessions(all, new Set(['gone'])).map((x) => x.id)).toEqual(['live', 'ending']);
+    // revived (active again): back on the floor even though it once faded
+    expect(visibleSessions([s('gone', 'active')], new Set(['gone'])).map((x) => x.id)).toEqual(['gone']);
   });
 
   it('handoffTarget walks a child to its parent and a top-level agent to the boss', () => {

@@ -1,11 +1,13 @@
 // The floor: one room per session in a scrolling grid, diffed per room by session id. Browser-only.
 import type { OfficeState, Session } from '../shared/types.js';
-import { layoutRooms, ROOM_GAP, type RoomLayout } from './layout.js';
+import { layoutRooms, ROOM_GAP, visibleSessions, type RoomLayout } from './layout.js';
 import { layoutOf, renderRoom, updateRoom } from './rooms.js';
 
 export class Floor {
   private readonly rooms = new Map<string, SVGGElement>();
   private last: OfficeState = { sessions: {} };
+  /** ended sessions whose fade-out finished: off the floor while they stay ended */
+  private readonly faded = new Set<string>();
 
   /** svg: the floor's root <svg> (sized in px); layer: the <g> rooms go into; viewport: the scrolling element. */
   constructor(
@@ -23,9 +25,16 @@ export class Floor {
     return this.last;
   }
 
+  /** Marks an ended room as faded out: the next render drops it (it returns if the session revives). */
+  hideEnded(sessionId: string): void {
+    if (this.last.sessions[sessionId]?.status === 'ended') this.faded.add(sessionId);
+  }
+
   render(state: OfficeState = this.last): number {
     this.last = state;
-    const sessions = Floor.order(state);
+    // revived (or pruned) sessions are no longer hidden
+    for (const id of this.faded) if (state.sessions[id]?.status !== 'ended') this.faded.delete(id);
+    const sessions = visibleSessions(Floor.order(state), this.faded);
     const rects = layoutRooms(sessions.length, this.viewport.clientWidth, this.viewport.clientHeight);
     const seen = new Set<string>();
     sessions.forEach((s, i) => {
