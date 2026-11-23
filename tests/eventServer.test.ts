@@ -1,12 +1,13 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, cpSync, appendFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { request } from 'node:http';
 import { createServer } from 'node:net';
 import WebSocket from 'ws';
 import { OfficeStore } from '../src/core/store.js';
 import { startEventServer } from '../src/server/eventServer.js';
+import { subagentLogPath } from '../src/core/discovery.js';
 import { startApp } from '../src/core/app.js';
 import type { ServerMessage } from '../src/shared/types.js';
 
@@ -234,8 +235,48 @@ describe('startApp', () => {
     await send({ hook_event_name: 'SessionEnd', reason: 'other' });
     app.store.tick(Date.now() + 3 * 3_600_000); // far future: session pruned from the snapshot
     expect(app.store.snapshot().sessions.S5).toBeUndefined();
+    expect(app.watchedPaths()).not.toContain(tp);
     appendFileSync(tp, assistantLine('d2', 9));
-    await new Promise((r) => setTimeout(r, 2500)); // > 2 poll intervals
+    await new Promise((r) => setTimeout(r, 1500)); // > 1 poll interval
     expect(app.store.snapshot().sessions.S5).toBeUndefined();
+  });
+
+  it('(e) log of a pruned agent is unwatched while its session stays', async () => {
+    const { home, proj } = claudeHome();
+    const tp = join(proj, 'S6.jsonl');
+    writeFileSync(tp, assistantLine('e1', 5));
+    const { port, app } = await bootApp(home);
+    const send = (e: object) => post(port, JSON.stringify({ session_id: 'S6', cwd: '/w/app', transcript_path: tp, ...e }), auth);
+    await send({ hook_event_name: 'SessionStart', source: 'startup' });
+    await send({ hook_event_name: 'SubagentStart', agent_id: 'ag6', agent_type: 'general-purpose' });
+    const subLog = subagentLogPath(home, tp, 'ag6');
+    mkdirSync(dirname(subLog), { recursive: true });
+    writeFileSync(subLog, assistantLine('e2', 3));
+    await until(() => (app.store.snapshot().sessions.S6?.agents.ag6?.stats.outputTokens ?? 0) === 3);
+    expect(app.watchedPaths()).toContain(subLog);
+    await send({ hook_event_name: 'SubagentStop', agent_id: 'ag6', agent_type: 'general-purpose' });
+    app.store.tick(Date.now() + 10_000); // handing_off -> gone (6 s)
+    app.store.tick(Date.now() + 80_000); // gone -> pruned (+60 s linger)
+    const snap = app.store.snapshot().sessions.S6!;
+    expect(snap.agents.ag6).toBeUndefined();
+    expect(app.watchedPaths()).not.toContain(subLog);
+    expect(app.watchedPaths()).toContain(tp);
+  });
+
+  it('(f) a never-seen subagent log is unwatched once its session is pruned', async () => {
+    const { home, proj } = claudeHome();
+    const tp = join(proj, 'S8.jsonl');
+    writeFileSync(tp, assistantLine('f1', 5));
+    const subLog = join(proj, 'S8', 'subagents', 'agent-ghost.jsonl');
+    mkdirSync(dirname(subLog), { recursive: true });
+    writeFileSync(subLog, ''); // never yields a delta, so the agent never appears in the store
+    const { port, app } = await bootApp(home);
+    await until(() => app.store.snapshot().sessions.S8?.boss.stats.outputTokens === 5);
+    expect(app.watchedPaths()).toContain(subLog);
+    expect(app.store.snapshot().sessions.S8!.agents.ghost).toBeUndefined();
+    await post(port, JSON.stringify({ hook_event_name: 'SessionEnd', session_id: 'S8', reason: 'other' }), auth);
+    app.store.tick(Date.now() + 3 * 3_600_000);
+    expect(app.store.snapshot().sessions.S8).toBeUndefined();
+    expect(app.watchedPaths()).toEqual([]);
   });
 });

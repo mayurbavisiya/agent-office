@@ -8,7 +8,7 @@ import { LogWatcher } from './logWatcher.js';
 import type { LogDelta } from './logParser.js';
 import { OfficeStore } from './store.js';
 
-export type App = { url: string; store: OfficeStore; close(): Promise<void> };
+export type App = { url: string; store: OfficeStore; watchedPaths(): string[]; close(): Promise<void> };
 
 /** `seen`: the session/agent has existed in the store at least once. Only then does its absence mean "pruned"
  * (a discovered subagent has no store entry until its first delta, so absence alone proves nothing). */
@@ -39,15 +39,22 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
     watcher.watch(sessionId, agentId, path, { fromStart: true });
   };
 
-  /** Unwatch (forever) the logs of agents and sessions the store has pruned. Ended sessions keep being watched until pruned. */
+  const seenSessions = new Set<string>();
+  /** Unwatch (forever) the logs of pruned agents and sessions. Ended sessions keep being watched until pruned.
+   * A session seen once and now absent drops every path under it (even agents never seen); an agent seen once
+   * and now absent drops its own path. */
   const syncWatches = (): void => {
     const sessions = store.snapshot().sessions;
     for (const [path, t] of tracked) {
       const s = sessions[t.sessionId];
-      const present = !!s && (!t.agentId || !!s.agents[t.agentId]);
-      if (present) {
-        t.seen = true;
-      } else if (t.seen) {
+      if (s) {
+        seenSessions.add(t.sessionId);
+        if (!t.agentId || s.agents[t.agentId]) {
+          t.seen = true;
+          continue;
+        }
+      }
+      if (s ? t.seen : seenSessions.has(t.sessionId)) {
         watcher.unwatch(path);
         tracked.delete(path);
         dropped.add(path);
@@ -108,6 +115,7 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
   return {
     url: server.url,
     store,
+    watchedPaths: () => watcher.watchedPaths(),
     async close() {
       clearInterval(tick);
       watcher.close();

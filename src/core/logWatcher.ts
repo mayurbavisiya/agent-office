@@ -53,6 +53,11 @@ export class LogWatcher extends EventEmitter {
     if (this.tails.size === 0) this.stopTimer();
   }
 
+  /** Paths currently being tailed (for diagnostics and tests). */
+  watchedPaths(): string[] {
+    return [...this.tails.keys()];
+  }
+
   close(): void {
     this.closed = true;
     this.tails.clear();
