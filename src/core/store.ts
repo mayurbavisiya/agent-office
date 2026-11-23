@@ -17,7 +17,10 @@ export const SPAWN_MS = 2_000;
 const MAX_PENDING = 100;
 const TAKEOVER_SOURCES = new Set(['clear', 'resume', 'compact']);
 const RUNNING: ReadonlySet<AgentStatus> = new Set(['spawning', 'working', 'quiet']);
-const NEEDS_YOU_TYPES = new Set(['permission_prompt', 'idle_prompt', 'elicitation_dialog']);
+/** idle_prompt is deliberately absent: it fires ~60 s after Stop, which is the spec's idle (sleeping) state. */
+const NEEDS_YOU_TYPES = new Set(['permission_prompt', 'elicitation_dialog']);
+/** how many replaced (taken-over) session ids are remembered to drop their late events */
+const MAX_REPLACED = 200;
 
 /** A PreToolUse(Agent) waiting to be matched to the SubagentStart it caused (hook-notes §2/§3). */
 type PendingSpawn = {
@@ -70,12 +73,14 @@ export function findLeadSession(e: HookEvent, sessions: Record<string, Session>)
   return null;
 }
 
-/** permission / input notifications only (controller ruling); everything else is ignored */
+/**
+ * Permission prompts and elicitation/input dialogs only (controller ruling); everything else, including
+ * idle_prompt, is ignored. The "permission" text fallback applies only when notification_type is absent.
+ */
 function isNeedsYouNotification(e: HookEvent): boolean {
   const t = str(e.notification_type);
-  if (t && NEEDS_YOU_TYPES.has(t)) return true;
-  const m = str(e.message)?.toLowerCase() ?? '';
-  return m.includes('permission') || m.includes('waiting for your input');
+  if (t) return NEEDS_YOU_TYPES.has(t);
+  return (str(e.message)?.toLowerCase() ?? '').includes('permission');
 }
 
 // ---------------------------------------------------------------- transitions
@@ -187,6 +192,14 @@ export class OfficeStore {
   private sessions: Record<string, Session> = {};
   private meta = new Map<string, SessionMeta>();
   private teammates = new Map<string, TeammateLink>();
+  /**
+   * Session ids replaced by a takeover (old id → successor), bounded to MAX_REPLACED, oldest dropped.
+   * Late hook events and logs for a replaced id are DROPPED, not rerouted: they belong to the old
+   * conversation (its SessionEnd/Stop/tool events would wrongly end or idle the successor's room, and
+   * its tokens are not the new conversation's). Only an explicit SessionStart(source: resume) for the
+   * old id brings it back, as its own session.
+   */
+  private replaced = new Map<string, string>();
   private listeners: Array<(events: OfficeEvent[]) => void> = [];
 
   constructor(opts: { stuckMs?: number; endedMs?: number } = {}) {
@@ -217,7 +230,7 @@ export class OfficeStore {
 
   applyLog(sessionId: string, agentId: string | null, d: LogDelta, now: number): void {
     const out: OfficeEvent[] = [];
-    if (!str(sessionId) || !isObj(d)) return;
+    if (!str(sessionId) || !isObj(d) || this.replaced.has(sessionId)) return;
     try {
       const delta: LogDelta = { ...d, toolUses: Array.isArray(d.toolUses) ? d.toolUses : [] };
       let sid = sessionId;
@@ -300,6 +313,10 @@ export class OfficeStore {
     let name = str(e.hook_event_name);
     const rawSid = str(e.session_id);
     if (!name || !rawSid) return;
+    if (this.replaced.has(rawSid)) {
+      if (name !== 'SessionStart' || e.source !== 'resume') return; // late event of a taken-over session
+      this.replaced.delete(rawSid);
+    }
 
     // Teammate sessions are routed into their lead's room as an agent.
     let link = this.teammates.get(rawSid);
@@ -441,6 +458,9 @@ export class OfficeStore {
     }
     if (!from) return false;
     this.removeSession(from.id);
+    this.replaced.delete(from.id);
+    this.replaced.set(from.id, sid);
+    if (this.replaced.size > MAX_REPLACED) this.replaced.delete(this.replaced.keys().next().value!);
     const sink: OfficeEvent[] = [];
     const s = this.ensureSession(sid, cwd, now, sink);
     s.branch = from.branch;

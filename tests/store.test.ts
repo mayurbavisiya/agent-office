@@ -131,6 +131,34 @@ describe('OfficeStore: sessions', () => {
     expect(Object.keys(s.snapshot().sessions)).toEqual(['S2']);
   });
 
+  it('takeover then late events for the old id (Start(clear) before End(clear), late Stop) → one room, no session_started for the old id', () => {
+    const s = new OfficeStore();
+    s.applyHook(ev({ hook_event_name: 'SessionStart', source: 'startup' }), 0);
+    s.applyHook(ev({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), 100);
+    s.applyHook(ev({ hook_event_name: 'Stop' }), 200);
+    const out: OfficeEvent[] = [];
+    out.push(...s.applyHook(ev({ hook_event_name: 'SessionStart', session_id: 'S2', source: 'clear' }), 300));
+    out.push(...s.applyHook(ev({ hook_event_name: 'SessionEnd', reason: 'clear' }), 310));
+    out.push(...s.applyHook(ev({ hook_event_name: 'Stop' }), 320));
+    s.applyLog('S1', null, { toolUses: [], usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } }, 330);
+    expect(out).toEqual([{ kind: 'shift_change', fromSessionId: 'S1', toSessionId: 'S2' }]);
+    const ss = s.snapshot().sessions;
+    expect(Object.keys(ss)).toEqual(['S2']);
+    expect(ss.S2.status).toBe('active');
+    expect(ss.S2.boss.status).toBe('idle');
+    expect(ss.S2.boss.stats.outputTokens).toBe(0);
+  });
+
+  it('a replaced session id that is explicitly resumed later gets a room again', () => {
+    const s = new OfficeStore();
+    s.applyHook(ev({ hook_event_name: 'SessionStart', source: 'startup' }), 0);
+    s.applyHook(ev({ hook_event_name: 'SessionStart', session_id: 'S2', source: 'clear' }), 100);
+    s.applyHook(ev({ hook_event_name: 'UserPromptSubmit', session_id: 'S2', prompt: 'busy' }), 200);
+    const out = s.applyHook(ev({ hook_event_name: 'SessionStart', source: 'resume', cwd: '/work/other' }), 300);
+    expect(out).toEqual([{ kind: 'session_started', sessionId: 'S1' }]);
+    expect(Object.keys(s.snapshot().sessions).sort()).toEqual(['S1', 'S2']);
+  });
+
   it('SessionStart source resume with a new id in same cwd as a quiet (idle) session takes over', () => {
     const s = new OfficeStore();
     s.applyHook(ev({ hook_event_name: 'SessionStart', source: 'startup' }), 0);
@@ -387,18 +415,35 @@ describe('OfficeStore: boss', () => {
     s.applyHook(ev({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'x' }), 20);
     expect(boss()).toBe('working');
 
-    s.applyHook(ev({ hook_event_name: 'Stop' }), 30);
-    s.applyHook(ev({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }), 40);
+    s.applyHook(ev({ hook_event_name: 'Notification', notification_type: 'elicitation_dialog', message: 'Claude has a question' }), 30);
     expect(boss()).toBe('needs_you');
-    s.applyHook(ev({ hook_event_name: 'UserPromptSubmit', prompt: 'next' }), 50);
+    s.applyHook(ev({ hook_event_name: 'UserPromptSubmit', prompt: 'next' }), 40);
     expect(boss()).toBe('working');
 
-    // fallback on message text when notification_type is missing
-    s.applyHook(ev({ hook_event_name: 'Notification', message: 'Claude needs your permission to use Edit' }), 60);
+    // fallback on message text only when notification_type is missing
+    s.applyHook(ev({ hook_event_name: 'Notification', message: 'Claude needs your permission to use Edit' }), 50);
     expect(boss()).toBe('needs_you');
-    s.applyHook(ev({ hook_event_name: 'UserPromptSubmit', prompt: 'ok' }), 70);
-    s.applyHook(ev({ hook_event_name: 'Notification', message: 'Claude is waiting for your input' }), 80);
-    expect(boss()).toBe('needs_you');
+  });
+
+  it('idle_prompt (and "waiting for your input") leaves an idle boss idle, and the room can still be taken over', () => {
+    const s = new OfficeStore();
+    s.applyHook(ev({ hook_event_name: 'UserPromptSubmit', prompt: 'go' }), 0);
+    s.applyHook(ev({ hook_event_name: 'Stop' }), 10);
+    s.applyHook(ev({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }), 60_010);
+    expect(s.snapshot().sessions.S1.boss.status).toBe('idle');
+    s.applyHook(ev({ hook_event_name: 'Notification', message: 'Claude is waiting for your input' }), 60_020);
+    expect(s.snapshot().sessions.S1.boss.status).toBe('idle');
+    const out = s.applyHook(ev({ hook_event_name: 'SessionStart', session_id: 'S2', source: 'clear' }), 60_030);
+    expect(out).toEqual([{ kind: 'shift_change', fromSessionId: 'S1', toSessionId: 'S2' }]);
+  });
+
+  it('permission_prompt sets needs_you; "permission" in the message with a non-permission notification_type does not', () => {
+    const s = new OfficeStore();
+    s.applyHook(ev({ hook_event_name: 'Stop' }), 0);
+    s.applyHook(ev({ hook_event_name: 'Notification', notification_type: 'auth_success', message: 'permission granted' }), 10);
+    expect(s.snapshot().sessions.S1.boss.status).toBe('idle');
+    s.applyHook(ev({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }), 20);
+    expect(s.snapshot().sessions.S1.boss.status).toBe('needs_you');
   });
 
   it('other notifications are ignored', () => {
