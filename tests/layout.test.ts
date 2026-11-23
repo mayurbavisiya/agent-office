@@ -178,6 +178,17 @@ describe('roomLayout', () => {
     expect(visibleSessions([s('gone', 'active')], new Set(['gone'])).map((x) => x.id)).toEqual(['gone']);
   });
 
+  it('ended sessions with no existing room are hidden on initial render', () => {
+    const s = (id: string, status: 'active' | 'ended') => ({ id, status });
+    const all = [s('live', 'active'), s('oldEnded', 'ended'), s('justEnded', 'ended')];
+    // initial snapshot: no rooms yet, so an already-ended session never gets one
+    expect(visibleSessions(all, new Set(), new Set()).map((x) => x.id)).toEqual(['live']);
+    // a session that ended while its room was on screen keeps it (it still gets its fade-out)
+    expect(visibleSessions(all, new Set(), new Set(['live', 'justEnded'])).map((x) => x.id)).toEqual(['live', 'justEnded']);
+    // revived: back even without a room
+    expect(visibleSessions([s('oldEnded', 'active')], new Set(['oldEnded']), new Set()).map((x) => x.id)).toEqual(['oldEnded']);
+  });
+
   it('handoffTarget walks a child to its parent and a top-level agent to the boss', () => {
     const agents = [agent('p', null, 1), agent('k', 'p', 2)];
     const s = session(agents);

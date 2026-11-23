@@ -164,10 +164,13 @@ export function assignSeats(order: string[], prev: Record<string, number> = {}, 
 
 /**
  * Sessions that get a room on the floor: all of them, except ended sessions whose fade-out has
- * finished (`faded`). A faded session that becomes active again gets its room back.
+ * finished (`faded`) and, when `existing` (ids that have a room now) is given, ended sessions with
+ * no room: those were already ended when the page loaded or reconnected, so they count as faded.
+ * A session that ends while its room is on screen keeps it until its fade-out completes. Any
+ * session that becomes active again gets its room back.
  */
-export function visibleSessions<S extends Pick<Session, 'id' | 'status'>>(sessions: S[], faded: ReadonlySet<string>): S[] {
-  return sessions.filter((s) => !(s.status === 'ended' && faded.has(s.id)));
+export function visibleSessions<S extends Pick<Session, 'id' | 'status'>>(sessions: S[], faded: ReadonlySet<string>, existing?: ReadonlySet<string>): S[] {
+  return sessions.filter((s) => s.status !== 'ended' || (!faded.has(s.id) && (!existing || existing.has(s.id))));
 }
 
 /**

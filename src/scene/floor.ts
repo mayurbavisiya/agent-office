@@ -34,7 +34,8 @@ export class Floor {
     this.last = state;
     // revived (or pruned) sessions are no longer hidden
     for (const id of this.faded) if (state.sessions[id]?.status !== 'ended') this.faded.delete(id);
-    const sessions = visibleSessions(Floor.order(state), this.faded);
+    // ended sessions without a room (already ended at load / reconnect) are never given one
+    const sessions = visibleSessions(Floor.order(state), this.faded, new Set(this.rooms.keys()));
     const rects = layoutRooms(sessions.length, this.viewport.clientWidth, this.viewport.clientHeight);
     const seen = new Set<string>();
     sessions.forEach((s, i) => {
