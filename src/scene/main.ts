@@ -2,6 +2,7 @@
 import type { ServerMessage } from '../shared/types.js';
 import { Floor } from './floor.js';
 import { tickTimers } from './characters.js';
+import { animStats, planAnimations, runAnimations } from './animator.js';
 
 const viewport = document.getElementById('floor') as HTMLElement;
 const svg = document.getElementById('office') as unknown as SVGSVGElement;
@@ -33,6 +34,9 @@ function connect(): void {
       return;
     }
     if (!msg || typeof msg !== 'object' || !msg.state || typeof msg.state.sessions !== 'object') return;
+    // queue first (marks departing characters so this render keeps them), then render; queued
+    // steps start on a microtask, after the render and before the next paint
+    if (msg.type === 'events' && Array.isArray(msg.events)) runAnimations(planAnimations(msg.events, msg.state), svg);
     floor.render(msg.state);
     empty.hidden = Object.keys(msg.state.sessions).length > 0;
   };
@@ -55,4 +59,4 @@ draw();
 connect();
 
 // hooks for later tasks (animator, click panel) and for debugging
-(window as unknown as { agentOffice: unknown }).agentOffice = { floor };
+(window as unknown as { agentOffice: unknown }).agentOffice = { floor, anim: animStats, planAnimations, runAnimations, svg };

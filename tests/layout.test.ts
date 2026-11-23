@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { layoutRooms, roomLayout, handoffTarget, MIN_ROOM_W, MIN_ROOM_H } from '../src/scene/layout.js';
+import { layoutRooms, roomLayout, handoffTarget, assignSeats, MIN_ROOM_W, MIN_ROOM_H } from '../src/scene/layout.js';
 import type { Agent, Session } from '../src/shared/types.js';
 
 const stats = () => ({ inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, tools: {}, files: [], recent: [], lastActivity: 0 });
@@ -126,6 +126,27 @@ describe('roomLayout', () => {
     expect(new Set(pts.map((p) => `${p.x},${p.y}`)).size).toBe(25);
     expect(l.crowded).toBe(true);
     expect(roomLayout(session([agent('a', null, 1)]), r).crowded).toBe(false);
+  });
+
+  it('seat assignment is sticky when an agent leaves and new agents take the first free slot', () => {
+    expect(assignSeats(['a', 'b', 'c'])).toEqual({ a: 0, b: 1, c: 2 });
+    expect(assignSeats(['a', 'c'], { a: 0, b: 1, c: 2 })).toEqual({ a: 0, c: 2 });
+    expect(assignSeats(['a', 'c', 'd', 'e'], { a: 0, c: 2 })).toEqual({ a: 0, c: 2, d: 1, e: 3 });
+
+    const big = { x: 0, y: 0, w: 900, h: 400 };
+    const first = roomLayout(session([agent('a', null, 1), agent('b', null, 2), agent('c', null, 3)]), big);
+    const bSeat = first.seats.b;
+    // b leaves: a and c stay exactly where they were
+    const second = roomLayout(session([agent('a', null, 1), agent('b', null, 2, 'gone'), agent('c', null, 3)]), big, first.slots);
+    expect(second.seats.a).toEqual(first.seats.a);
+    expect(second.seats.c).toEqual(first.seats.c);
+    expect(second.seats.b).toBeUndefined();
+    // a new agent takes b's free desk; nobody else moves
+    const third = roomLayout(session([agent('a', null, 1), agent('c', null, 3), agent('d', null, 9)]), big, second.slots);
+    expect(third.slots.d).toBe(1);
+    expect({ x: third.seats.d.x, y: third.seats.d.y }).toEqual({ x: bSeat.x, y: bSeat.y });
+    expect(third.seats.a).toEqual(first.seats.a);
+    expect(third.seats.c).toEqual(first.seats.c);
   });
 
   it('handoffTarget walks a child to its parent and a top-level agent to the boss', () => {

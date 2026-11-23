@@ -10,6 +10,10 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 .room .dim { opacity: 0; pointer-events: none; transition: opacity .6s; }
 .room.room--dim .dim { opacity: .32; }
 .char .tag { pointer-events: none; }
+/* animator: the door leaf swings from its hinge; overlays never catch clicks */
+.doorL { transform-box: fill-box; transform-origin: left center; }
+.anim-fx { pointer-events: none; }
+.anim-fx .pop { transform-box: fill-box; transform-origin: center; }
 /* crowded rooms: agent name tags only on hover (the sign shows the agent count) */
 .room--crowded .char:not(.boss):not(:hover) .tag { display: none; }
 

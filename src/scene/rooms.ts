@@ -30,6 +30,7 @@ export function renderRoom(session: Session, rect: Rect): SVGGElement {
   svgEl('g', { class: 'board' }, inner);
   svgEl('g', { class: 'desks' }, inner);
   svgEl('g', { class: 'people' }, inner);
+  svgEl('g', { class: 'anim-fx' }, inner); // animator overlays: sparkle, paper, bubbles, confetti
   svgEl('rect', { class: 'dim', x: 0, y: 0, fill: '#0f172a' }, inner);
   const sign = svgEl('g', { class: 'sign' }, inner);
   svgEl('rect', { x: 8, y: 6, height: SIGN_H, rx: 5, fill: '#1e293b' }, sign);
@@ -156,15 +157,19 @@ function placeCharacter(people: SVGGElement, opts: CharacterOpts, x: number, y: 
     people.appendChild(c);
   }
   c.setAttribute('transform', `translate(${x},${y})`);
+  c.dataset.x = String(x);
+  c.dataset.y = String(y);
   return c;
 }
 
 /**
  * Diffs a room group against the session: characters and desks are keyed by id and updated
- * in place (so their CSS animations keep running); ones no longer in state are removed.
+ * in place (so their CSS animations keep running); ones no longer in state are removed, except
+ * characters marked data-departing while their exit animation runs.
  */
 export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLayout {
-  const l = roomLayout(session, rect);
+  // previous slots keep every agent at its desk across snapshots (sticky seats)
+  const l = roomLayout(session, rect, layouts.get(g)?.slots);
   layouts.set(g, l);
   const sid = session.id;
   g.dataset.sessionId = sid;
@@ -275,7 +280,14 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
     else delete c.dataset.parentId;
   }
 
-  for (const el of Array.from(people.children) as SVGGElement[]) if (!keep.has(el.dataset.agentId ?? '')) el.remove();
+  // a departing character (marked by the animator) outlives its seat until its handoff + exit
+  // finish; the animator removes it then. Pruned agents are removed regardless.
+  for (const el of Array.from(people.children) as SVGGElement[]) {
+    const id = el.dataset.agentId ?? '';
+    if (keep.has(id)) continue;
+    if (el.dataset.departing && session.agents[id]) continue;
+    el.remove();
+  }
   for (const el of Array.from(desks.children) as SVGGElement[]) if (!keep.has(el.dataset.deskFor ?? '')) el.remove();
   return l;
 }

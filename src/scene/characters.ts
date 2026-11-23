@@ -124,13 +124,19 @@ function fxMarkup(fx: Fx, s: number): string {
   }
 }
 
-/** Builds a character group; see updateCharacter for the attributes it carries. */
+/**
+ * Builds a character group; see updateCharacter for the attributes it carries.
+ * Structure: g.char (positioned by its caller via the transform attribute) > g.anim (owned by the
+ * animator: Web Animations offsets/opacity only) > .fig, .fx, .tag. The two transforms compose,
+ * so a snapshot re-placing g.char never clobbers a walk in progress.
+ */
 export function renderCharacter(opts: CharacterOpts): SVGGElement {
   const g = svgEl('g', { class: 'char' });
-  const fig = svgEl('g', { class: 'fig' }, g);
+  const anim = svgEl('g', { class: 'anim' }, g);
+  const fig = svgEl('g', { class: 'fig' }, anim);
   fig.dataset.sig = '';
-  svgEl('g', { class: 'fx' }, g);
-  const tag = svgEl('g', { class: 'tag' }, g);
+  svgEl('g', { class: 'fx' }, anim);
+  const tag = svgEl('g', { class: 'tag' }, anim);
   svgEl('rect', { class: 'pill', height: 15, rx: 7.5, fill: '#fff', 'stroke-width': 1.5 }, tag);
   svgEl('text', { class: 'name', 'font-size': 10, 'font-weight': 700, 'text-anchor': 'middle', fill: '#111' }, tag);
   svgEl('text', { class: 'task', 'font-size': 8, 'text-anchor': 'middle', fill: '#334155' }, tag);
@@ -139,12 +145,27 @@ export function renderCharacter(opts: CharacterOpts): SVGGElement {
   return g;
 }
 
+const lastOpts = new WeakMap<SVGGElement, CharacterOpts>();
+
+/**
+ * Overrides the state-driven pose while an animation runs (e.g. 'walk' while walking in);
+ * null restores the pose from state. Survives snapshot updates until cleared.
+ */
+export function setAnimPose(g: SVGGElement, pose: Pose | null): void {
+  if (pose) g.dataset.animPose = pose;
+  else delete g.dataset.animPose;
+  const o = lastOpts.get(g);
+  if (o) updateCharacter(g, o);
+}
+
 /**
  * Updates a character in place. The figure (and its CSS animations) is only rebuilt when
  * pose/mood/look/scale change; overlays only when the status overlay changes.
  * Position is not touched here: the caller sets the group's transform.
  */
-export function updateCharacter(g: SVGGElement, o: CharacterOpts): void {
+export function updateCharacter(g: SVGGElement, opts: CharacterOpts): void {
+  lastOpts.set(g, opts);
+  const o: CharacterOpts = g.dataset.animPose ? { ...opts, pose: g.dataset.animPose as Pose } : opts;
   const s = o.scale ?? 1;
   const fx = o.fx ?? 'none';
   g.dataset.agentId = o.id;
@@ -153,7 +174,7 @@ export function updateCharacter(g: SVGGElement, o: CharacterOpts): void {
   g.dataset.mood = o.mood;
   g.classList.toggle('tapping', fx === 'tap');
 
-  const fig = g.querySelector<SVGGElement>(':scope > .fig')!;
+  const fig = g.querySelector<SVGGElement>(':scope > .anim > .fig')!;
   const sig = [o.pose, o.mood, o.accessory, o.color, s].join('|');
   if (fig.dataset.sig !== sig) {
     fig.dataset.sig = sig;
@@ -162,7 +183,7 @@ export function updateCharacter(g: SVGGElement, o: CharacterOpts): void {
     html(fig, figureMarkup(o));
   }
 
-  const fxg = g.querySelector<SVGGElement>(':scope > .fx')!;
+  const fxg = g.querySelector<SVGGElement>(':scope > .anim > .fx')!;
   const fxSig = `${fx}|${s}`;
   if (fxg.dataset.sig !== fxSig) {
     fxg.dataset.sig = fxSig;
@@ -177,7 +198,7 @@ export function updateCharacter(g: SVGGElement, o: CharacterOpts): void {
 
   // name tag stack, fixed pixel size, sitting above the head
   const a = -HEAD_TOP * s;
-  const tag = g.querySelector<SVGGElement>(':scope > .tag')!;
+  const tag = g.querySelector<SVGGElement>(':scope > .anim > .tag')!;
   const pill = tag.querySelector<SVGRectElement>('.pill')!;
   const name = tag.querySelector<SVGTextElement>('.name')!;
   const task = tag.querySelector<SVGTextElement>('.task')!;

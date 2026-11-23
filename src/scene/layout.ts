@@ -62,6 +62,8 @@ export type RoomLayout = {
   seats: Record<string, Seat>;
   /** visible agent ids in seating order (parents followed by their helpers) */
   order: string[];
+  /** desk slot index per visible agent id; pass it back to the next roomLayout call to keep seats sticky */
+  slots: Record<string, number>;
   /** too many agents for clean desks: the grid is squeezed and desks overlap */
   crowded: boolean;
 };
@@ -105,8 +107,36 @@ function seatingOrder(session: Session): { id: string; depth: number }[] {
   return out;
 }
 
-/** Interior geometry of one room: boss corner, door, and a desk per visible agent. */
-export function roomLayout(session: Session, rect: Rect): RoomLayout {
+/**
+ * Sticky desk assignment. Agents in `prev` that are still in `order` keep their slot; new agents,
+ * taken in `order`, get the lowest free slot. Agents missing from `order` free their slot.
+ */
+export function assignSeats(order: string[], prev: Record<string, number> = {}): Record<string, number> {
+  const out: Record<string, number> = {};
+  const taken = new Set<number>();
+  for (const id of order) {
+    const s = prev[id];
+    if (Number.isInteger(s) && s >= 0 && !taken.has(s)) {
+      out[id] = s;
+      taken.add(s);
+    }
+  }
+  let next = 0;
+  for (const id of order) {
+    if (id in out) continue;
+    while (taken.has(next)) next++;
+    out[id] = next;
+    taken.add(next);
+  }
+  return out;
+}
+
+/**
+ * Interior geometry of one room: boss corner, door, and a desk per visible agent.
+ * Pass the previous layout's `slots` as prevSlots to keep agents at their desks across snapshots
+ * (see assignSeats); without it, desks are assigned in seating order.
+ */
+export function roomLayout(session: Session, rect: Rect, prevSlots?: Record<string, number>): RoomLayout {
   const { w, h } = rect;
   const wallH = Math.round(h * 0.34);
   const bossW = clamp(Math.round(w * 0.28), 96, 190);
@@ -117,7 +147,9 @@ export function roomLayout(session: Session, rect: Rect): RoomLayout {
   const door = { x: doorRect.x + dw / 2, y: Math.min(h - 10, wallH + 16) };
 
   const order = seatingOrder(session);
-  const n = order.length;
+  const slots = assignSeats(order.map((o) => o.id), prevSlots);
+  // grid cells needed: up to the highest occupied slot (free desks in between stay put)
+  const n = order.length ? Math.max(...Object.values(slots)) + 1 : 0;
   const x0 = bossW + 12;
   const x1 = w - 10;
   const aw = x1 - x0;
@@ -144,12 +176,14 @@ export function roomLayout(session: Session, rect: Rect): RoomLayout {
   const seats: Record<string, Seat> = {};
   const crowded = cols * rows < n;
   if (!crowded) {
-    const usedCols = Math.max(1, Math.min(cols, n));
+    // columns fill left to right from a grid centred on all columns, so adding or removing an
+    // agent never shifts the others sideways; rows are centred vertically by how many are in use
     const usedRows = Math.max(1, Math.min(rows, Math.ceil(n / cols)));
-    const gx = x0 + (aw - usedCols * slotW) / 2;
+    const gx = x0 + Math.max(0, aw - cols * slotW) / 2;
     const gy = yMin + Math.max(0, yMax - yMin - (usedRows - 1) * slotH) / 2;
     const mid = ((WS_RIGHT - WS_LEFT) / 2) * scale;
-    order.forEach(({ id, depth }, i) => {
+    order.forEach(({ id, depth }) => {
+      const i = slots[id];
       const c = i % cols;
       const r = Math.floor(i / cols);
       seats[id] = { x: Math.round(gx + c * slotW + slotW / 2 - mid), y: Math.round(gy + r * slotH), depth };
@@ -167,7 +201,8 @@ export function roomLayout(session: Session, rect: Rect): RoomLayout {
     const right = x1 - WS_RIGHT * scale;
     slotW = cols > 1 ? (right - left) / (cols - 1) : aw;
     slotH = rows > 1 ? spanY / (rows - 1) : slotH;
-    order.forEach(({ id, depth }, i) => {
+    order.forEach(({ id, depth }) => {
+      const i = slots[id];
       const c = i % cols;
       const r = Math.floor(i / cols);
       seats[id] = { x: Math.round(left + c * (cols > 1 ? slotW : 0)), y: Math.round(yMin + r * (rows > 1 ? slotH : 0)), depth };
@@ -180,7 +215,7 @@ export function roomLayout(session: Session, rect: Rect): RoomLayout {
   };
   // crowded rooms drop the task line rather than overlap neighbours' tags with it
   const taskChars = slotW < 70 ? 0 : clamp(Math.floor((slotW - 6) / 5), 12, 28);
-  return { rect, wallH, bossW, bossScale, scale, slotW, taskChars, boss, doorRect, door, seats, order: order.map((o) => o.id), crowded };
+  return { rect, wallH, bossW, bossScale, scale, slotW, taskChars, boss, doorRect, door, seats, order: order.map((o) => o.id), slots, crowded };
 }
 
 /** Current resting position of a character ('boss' or an agent id), room-local. */
