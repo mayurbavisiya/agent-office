@@ -248,10 +248,13 @@ export class OfficeStore {
         if (!a) return;
         a.stats = applyDelta(a.stats, delta);
         a.stats.lastActivity = now;
+        // discovered mid-run: the log's own timestamps say when it really started
+        if (delta.timestamp !== undefined && delta.timestamp < a.startedAt) a.startedAt = delta.timestamp;
         transitionAgent(a, 'activity', now, this.stuckMs);
       } else {
         s.boss.stats = applyDelta(s.boss.stats, delta);
         s.boss.stats.lastActivity = now;
+        if (delta.timestamp !== undefined && delta.timestamp < s.boss.startedAt) s.boss.startedAt = delta.timestamp;
       }
       s.lastActivity = now;
       transitionBoss(s, m, 'recompute');

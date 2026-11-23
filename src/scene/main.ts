@@ -4,7 +4,6 @@ import { Floor } from './floor.js';
 import { tickTimers } from './characters.js';
 import { InfoPanel } from './panel.js';
 import { tokText } from './rooms.js';
-import { totalTokens } from './looks.js';
 import { animStats, planAnimations, ROOM_FADED_EVENT, runAnimations } from './animator.js';
 
 const viewport = document.getElementById('floor') as HTMLElement;
@@ -81,7 +80,7 @@ function refreshTags(): void {
     const stats = c.dataset.agentId === 'boss' ? sess?.boss.stats : sess?.agents[c.dataset.agentId ?? '']?.stats;
     const tok = c.querySelector('.tok');
     if (stats && tok) {
-      const t = tokText(totalTokens(stats));
+      const t = tokText(stats);
       if (tok.textContent !== t) tok.textContent = t;
     }
   }

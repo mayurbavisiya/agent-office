@@ -352,6 +352,17 @@ describe('OfficeStore: subagents', () => {
     expect(s.snapshot().sessions.S1.agents.A.status).toBe('quiet');
   });
 
+  it('applyLog lowers startedAt to an earlier log timestamp (boss and agent), never raises it', () => {
+    const s = new OfficeStore();
+    s.applyHook(ev({ hook_event_name: 'SessionStart', source: 'startup' }), 5000);
+    s.applyLog('S1', null, { toolUses: [], timestamp: 1000 }, 6000);
+    expect(s.snapshot().sessions.S1.boss.startedAt).toBe(1000);
+    s.applyLog('S1', null, { toolUses: [], timestamp: 3000 }, 7000);
+    expect(s.snapshot().sessions.S1.boss.startedAt).toBe(1000);
+    s.applyLog('S1', 'A', { toolUses: [], timestamp: 2000 }, 8000);
+    expect(s.snapshot().sessions.S1.agents.A.startedAt).toBe(2000);
+  });
+
   it('applyLog with agentId null updates the boss stats', () => {
     const s = new OfficeStore();
     s.applyHook(ev({ hook_event_name: 'SessionStart', source: 'startup' }), 0);

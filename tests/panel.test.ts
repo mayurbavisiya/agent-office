@@ -48,6 +48,21 @@ describe('panelModel', () => {
     expect(m.team).toBeUndefined();
   });
 
+  it('shows real zeros once a model is known', () => {
+    const a = agent('a', { stats: stats({ model: 'claude-sonnet-5-5' }) });
+    const m = panelModel({ session: session([a]), agentId: 'a' }, 5000)!;
+    expect(m.tokens.input).toBe('0');
+    expect(m.tokens.cacheWrite).toBe('0');
+    expect(m.cost).toBe('~$0.000');
+  });
+
+  it('boss team counts the Agent tool calls when finished subagents are not in the store', () => {
+    const s = session([agent('a'), agent('b', { status: 'quiet' })], { stats: stats({ tools: { Agent: 34 } }) });
+    expect(panelModel({ session: s, agentId: 'boss' }, 5000)!.team).toEqual({ spawned: 34, done: 32, stuck: 1 });
+    const none = session([], { stats: stats({ tools: { Agent: 34 } }) });
+    expect(panelModel({ session: none, agentId: 'boss' }, 5000)!.team).toEqual({ spawned: 34, done: 34, stuck: 0 });
+  });
+
   it('computes cost, context, duration, sorted tools and a quiet label', () => {
     const a = agent('a', {
       status: 'quiet', name: 'scout', task: 'look around',

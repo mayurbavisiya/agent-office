@@ -31,6 +31,11 @@ function clock(ms: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/** True once anything has been observed for this agent: a model name or any tokens. */
+export function hasUsage(st: AgentStats): boolean {
+  return st.model !== undefined || !!(st.inputTokens || st.outputTokens || st.cacheRead || st.cacheWrite);
+}
+
 export type PanelTarget = { session: Session; agentId: string | 'boss' };
 
 export type PanelModel = {
@@ -90,7 +95,7 @@ export function panelModel(target: PanelTarget, now: number): PanelModel | null 
     if (agent!.status === 'quiet') statusLabel += ` · ${formatDuration(now - st.lastActivity)} quiet`;
   }
 
-  const noUsage = !st.inputTokens && !st.outputTokens && !st.cacheRead && !st.cacheWrite;
+  const noUsage = !hasUsage(st);
   const tok = (n: number) => (noUsage ? DASH : formatTokens(n));
   const pct = typeof st.contextFill === 'number' && Number.isFinite(st.contextFill) ? Math.round(st.contextFill * 100) : undefined;
   const tools = Object.entries(st.tools)
@@ -98,6 +103,10 @@ export function panelModel(target: PanelTarget, now: number): PanelModel | null 
     .sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : 1));
   const type = isBoss ? 'main' : agent!.type;
   const agents = Object.values(session.agents);
+  // finished subagents may be absent from the store (discovered sessions): the boss's Agent tool count covers them
+  const spawned = Math.max(agents.length, session.boss.stats.tools.Agent ?? 0);
+  const running = agents.filter((a) => a.status !== 'gone' && a.status !== 'handing_off' && a.status !== 'quiet').length;
+  const stuck = agents.filter((a) => a.status === 'quiet').length;
 
   return {
     name: isBoss ? 'Main agent' : (agent!.name ?? agent!.type),
@@ -117,13 +126,7 @@ export function panelModel(target: PanelTarget, now: number): PanelModel | null 
     toolTotal: tools.reduce((n, t) => n + t.count, 0),
     files: st.files,
     recent: st.recent,
-    team: isBoss
-      ? {
-          spawned: agents.length,
-          done: agents.filter((a) => a.status === 'gone' || a.status === 'handing_off').length,
-          stuck: agents.filter((a) => a.status === 'quiet').length,
-        }
-      : undefined,
+    team: isBoss ? { spawned, done: Math.max(0, spawned - running - stuck), stuck } : undefined,
   };
 }
 

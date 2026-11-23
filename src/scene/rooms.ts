@@ -1,9 +1,9 @@
 // One room per session: a scaled-down office (wall, window, clock, whiteboard, door, the boss's
 // glass corner, desks) ported from the approved mockup. Browser-only.
-import type { Agent, Session } from '../shared/types.js';
+import type { Agent, AgentStats, Session } from '../shared/types.js';
 import { HEAD_TOP, roomLayout, SIGN_H, TAG_H, type Rect, type RoomLayout } from './layout.js';
 import { agentLook, bossLook, looksFor, totalTokens, truncate } from './looks.js';
-import { formatTokens } from './panel.js';
+import { formatTokens, hasUsage } from './panel.js';
 import { renderCharacter, renderDesk, setDeskScreen, svgEl, updateCharacter, type CharacterOpts } from './characters.js';
 
 const layouts = new WeakMap<SVGGElement, RoomLayout>();
@@ -18,7 +18,7 @@ function html(g: Element, s: string): void {
   g.insertAdjacentHTML('beforeend', s);
 }
 
-export const tokText = (n: number) => `⚡ ${formatTokens(n)} tok`;
+export const tokText = (st: AgentStats) => `⚡ ${hasUsage(st) ? formatTokens(totalTokens(st)) : '—'} tok`;
 
 /** Builds a room group for a session and draws it into rect (floor coordinates). */
 export function renderRoom(session: Session, rect: Rect): SVGGElement {
@@ -242,7 +242,7 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
       fx: boss.fx,
       name: 'Main agent',
       task: session.boss.status.replace(/_/g, ' '),
-      tokens: tokText(totalTokens(session.boss.stats)),
+      tokens: tokText(session.boss.stats),
       scale: l.bossScale,
     },
     l.boss.x,
@@ -269,7 +269,7 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
         since: a.stats.lastActivity,
         name: a.name ?? a.type,
         task: truncate(a.task, l.taskChars),
-        tokens: tokText(totalTokens(a.stats)),
+        tokens: tokText(a.stats),
         scale: l.scale,
       },
       seat.x,
