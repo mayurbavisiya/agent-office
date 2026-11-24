@@ -174,7 +174,10 @@ function refreshMenu(): void {
       },
       { label: 'Compact strip', type: 'checkbox', checked: state.compact, click: (m) => setCompact(m.checked) },
       { label: 'Always on top', type: 'checkbox', checked: state.alwaysOnTop, click: (m) => setOnTop(m.checked) },
-      { label: 'Launch at login', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin, click: (m) => app.setLoginItemSettings({ openAtLogin: m.checked }) },
+      // a login item for an unpackaged run would launch the bare Electron binary, not this app
+      app.isPackaged
+        ? { label: 'Launch at login', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin, click: (m) => app.setLoginItemSettings({ openAtLogin: m.checked }) }
+        : { label: 'Launch at login (packaged app only)', type: 'checkbox', checked: false, enabled: false },
       { type: 'separator' },
       { label: 'Quit Agent Office', click: () => app.quit() },
     ]),
@@ -198,10 +201,15 @@ function createTray(): void {
   log('tray created');
 }
 
-function showError(message: string): void {
+/** `portInUse`: the hint about another copy / another program on the port is shown only then. */
+function showError(message: string, portInUse: boolean): void {
   const w = new BrowserWindow({ width: 440, height: 170, resizable: false, title: 'Agent Office', webPreferences: { sandbox: true, contextIsolation: true } });
   const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
-  const page = `<body style="font:14px system-ui;padding:20px"><h3 style="margin-top:0">Agent Office could not start</h3><p>${esc(message)}</p><p style="color:#666">Another copy may already be running, or another program is using this port. Change the port in ${esc(dataDir)}/config.json if needed.</p></body>`;
+  const page = `<body style="font:14px system-ui;padding:20px"><h3 style="margin-top:0">Agent Office could not start</h3><p>${esc(message)}</p>${
+    portInUse
+      ? `<p style="color:#666">Another copy may already be running, or another program is using this port. Change the port in ${esc(dataDir)}/config.json if needed.</p>`
+      : `<p style="color:#666">Settings are in ${esc(dataDir)}/config.json.</p>`
+  }</body>`;
   void w.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(page)}`);
   errorWin = w;
   app.focus({ steal: true });
@@ -242,7 +250,8 @@ if (!app.requestSingleInstanceLock()) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log('startApp failed', msg);
-      showError(/EADDRINUSE|in use/i.test(msg) ? `The office port is already in use. ${msg}` : msg);
+      const inUse = /EADDRINUSE|in use/i.test(msg);
+      showError(inUse ? `The office port is already in use. ${msg}` : msg, inUse);
       return;
     }
     token = loadOrCreateConfig(dataDir).token;
