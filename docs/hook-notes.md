@@ -165,7 +165,7 @@ every field as optional and tolerate garbage.
   stops the module loading), so "no process noun here" is a rejected `$.process.run`, caught.
   `$.process.run` waits for the child's pipes to close, so the launcher redirects the tracker's
   stdio to /dev/null before `&`.
-- `/office` replies with `isTextDisplayOnly` and a token-free `context`: the person sees the link
-  with its token, the model reads it as `token=<hidden>`. The transcript row still holds the link.
+- `/office` replies with `isTextDisplayOnly` and no `context`: the person sees the reply and the link,
+  the model reads nothing, so `/office` costs no tokens. The transcript row still holds the link.
 - `isTextDisplayOnly` is ignored when `/office` is queued mid-turn, so the model may then see the link
   (with its token) in that turn.

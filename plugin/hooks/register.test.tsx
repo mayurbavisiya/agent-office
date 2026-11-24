@@ -160,6 +160,20 @@ test('/office starts the tracker when none answers', async ($, on) => {
   expect(text).toMatch(/started/i)
 })
 
+test('/office costs no tokens: its reply is display-only and the model gets no context', async ($, on) => {
+  world(on, { state: [ours()] })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const r = await $.command.run({
+    command: 'office',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 160 },
+  })
+  expect(r.isTextDisplayOnly).toBe(true)
+  expect(r.context ?? []).toEqual([])
+  expect(r.text).toContain(`token=${TOKEN}`)
+})
+
 test('/office waits for the config the tracker writes on first run', async ($, on) => {
   const w = world(on, { state: [ours()], config: 'after-launch' })
   const text = await office($)

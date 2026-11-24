@@ -79,7 +79,7 @@ Everything lives in `~/.agent-office/` (override the folder with the `AGENT_OFFI
 
 ## Privacy
 
-Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only. The hook event endpoint, the `/state` endpoint and the live connection the office window uses all require the token from `config.json` (the plugin sends it in a header, never on the command line); the office page's static files are served without it. The `/office` link contains the token, so treat it like a password. The model sees it as `token=<hidden>`, but the transcript row still holds the link. The `.key` files in the session registry are never read.
+Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only. The hook event endpoint, the `/state` endpoint and the live connection the office window uses all require the token from `config.json` (the plugin sends it in a header, never on the command line); the office page's static files are served without it. The `/office` link contains the token, so treat it like a password. The `/office` reply is shown to you only: the model never reads it, so `/office` uses no tokens. The transcript row still holds the link. The `.key` files in the session registry are never read.
 
 ## Known limits
 

@@ -59,7 +59,6 @@ const CHIP_ROWS = 2
 
 const short = (err: unknown): string => (err instanceof Error ? err.message : String(err)).split('\n')[0]?.slice(0, 200) ?? ''
 /** what the model reads of a reply: everything but the token */
-const redact = (text: string): string => text.replace(/token=[^\s]+/g, 'token=<hidden>')
 
 async function officeDir($: Engine): Promise<string> {
   const dir = await $.env.get('AGENT_OFFICE_DIR').catch(() => undefined)
@@ -427,8 +426,8 @@ export const register: Register = on => {
     } catch (err) {
       text = `Agent Office: ${short(err)}`
     }
-    // the reply carries the token for the person; the model reads it without
-    return { text, context: [redact(text)], isTextDisplayOnly: true }
+    // for the person only: no context, so the model reads nothing and /office costs no tokens
+    return { text, isTextDisplayOnly: true }
   })
 
   on('session.end', async ($, e, next) => {
