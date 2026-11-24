@@ -126,6 +126,29 @@ describe('event server', () => {
     ws.close();
   });
 
+  it('a burst of store changes is coalesced into fewer WS sends with every event, in order', async () => {
+    const { port, store } = await boot();
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${TOKEN}`);
+    const msgs: ServerMessage[] = [];
+    ws.on('message', (d) => msgs.push(JSON.parse(String(d))));
+    await new Promise((r) => ws.on('open', r));
+    await new Promise((r) => setTimeout(r, 50));
+    const emitted: unknown[] = [];
+    store.onChange((e) => emitted.push(...e));
+    const N = 20;
+    for (let i = 0; i < N; i++) store.applyHook({ hook_event_name: 'SessionStart', session_id: `B${i}`, cwd: `/w/${i}`, source: 'startup' }, Date.now());
+    await new Promise((r) => setTimeout(r, 200));
+    const evs = msgs.filter((m) => m.type === 'events');
+    expect(evs.length).toBeGreaterThan(0);
+    expect(evs.length).toBeLessThan(N);
+    const got = evs.flatMap((m) => (m.type === 'events' ? m.events : []));
+    expect(got).toEqual(emitted);
+    expect(emitted).toHaveLength(N);
+    const last = evs[evs.length - 1];
+    expect(last.type === 'events' && Object.keys(last.state.sessions)).toHaveLength(N);
+    ws.close();
+  });
+
   it('second server on same port rejects with "port <n> in use"', async () => {
     const { port, store, dir } = await boot();
     await expect(startEventServer({ port, token: TOKEN, store, staticDir: dir })).rejects.toThrow(`port ${port} in use`);

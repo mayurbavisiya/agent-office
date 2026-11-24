@@ -52,6 +52,19 @@ describe('parseLogLine', () => {
 });
 
 describe('applyDelta', () => {
+  it('caps files at the 200 most recently touched unique entries', () => {
+    let s = emptyStats(0);
+    for (let i = 0; i < 250; i++) s = applyDelta(s, delta({ toolUses: [{ name: 'Read', input: { file_path: `f${i}` } }] }));
+    expect(s.files).toHaveLength(200);
+    expect(s.files[0]).toBe('f50');
+    expect(s.files[199]).toBe('f249');
+    // touching an old entry again makes it most recent instead of duplicating it
+    s = applyDelta(s, delta({ toolUses: [{ name: 'Read', input: { file_path: 'f60' } }] }));
+    expect(s.files).toHaveLength(200);
+    expect(s.files[199]).toBe('f60');
+    expect(new Set(s.files).size).toBe(200);
+  });
+
   it('sums tokens, counts tools, adds file_path/path/pattern inputs to files (deduped), keeps last 20 recent entries like "Grep authMiddleware"', () => {
     let s = emptyStats(1000);
     s = applyDelta(s, delta({ model: 'm', usage: usage(10, 5, 100, 20), messageId: 'a', timestamp: 2000 }));

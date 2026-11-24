@@ -7,6 +7,8 @@ import type { OfficeStore } from '../core/store.js';
 import type { HookEvent, OfficeEvent, ServerMessage } from '../shared/types.js';
 
 const MAX_BODY = 1024 * 1024;
+/** store changes within this window go out as one message (latest state, every event in order) */
+export const BROADCAST_MS = 50;
 const HOST = '127.0.0.1';
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -43,10 +45,20 @@ export function startEventServer(opts: { port: number; token: string; store: Off
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
 
-  store.onChange((events: OfficeEvent[]) => {
+  let queued: OfficeEvent[] = [];
+  let timer: NodeJS.Timeout | undefined;
+  const flush = () => {
+    timer = undefined;
+    const events = queued;
+    queued = [];
     if (clients.size === 0) return;
     const msg: ServerMessage = { type: 'events', events, state: store.snapshot() };
     for (const ws of clients) send(ws, msg);
+  };
+  store.onChange((events: OfficeEvent[]) => {
+    if (clients.size === 0) return;
+    queued.push(...events);
+    timer ??= setTimeout(flush, BROADCAST_MS);
   });
 
   function handleEvent(req: IncomingMessage, res: ServerResponse): void {
@@ -170,6 +182,9 @@ export function startEventServer(opts: { port: number; token: string; store: Off
         url: `http://${HOST}:${actual}`,
         close: () =>
           new Promise<void>((done) => {
+            if (timer) clearTimeout(timer);
+            timer = undefined;
+            queued = [];
             for (const ws of clients) ws.terminate();
             clients.clear();
             wss.close();

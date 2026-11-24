@@ -13,6 +13,8 @@ export type LogDelta = {
 };
 
 const MAX_RECENT = 20;
+/** files touched: the most recently touched unique entries, newest last */
+const MAX_FILES = 200;
 /** Lines of one message are adjacent, so a small window of recent ids is enough. */
 const MAX_SEEN = 50;
 
@@ -99,11 +101,14 @@ export function applyDelta(stats: AgentStats, d: LogDelta): AgentStats {
       const v = t.input[k];
       if (typeof v === 'string' && v) {
         target ??= v;
-        if (!s.files.includes(v)) s.files.push(v);
+        const i = s.files.indexOf(v);
+        if (i >= 0) s.files.splice(i, 1);
+        s.files.push(v);
       }
     }
     s.recent.push(target ? `${t.name} ${target}` : t.name);
   }
   if (s.recent.length > MAX_RECENT) s.recent = s.recent.slice(-MAX_RECENT);
+  if (s.files.length > MAX_FILES) s.files = s.files.slice(-MAX_FILES);
   return s;
 }
