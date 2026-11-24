@@ -4,7 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import { MESSAGES, classifyProbe, formatReply, parseConfig } from '../mod/office'
+import { MESSAGES, classifyProbe, formatReply, needsEventCheck, parseConfig } from '../mod/office'
 import type { OfficeConfig, Probe } from '../mod/office'
 import {
   chipsOf,
@@ -106,6 +106,25 @@ async function bounded<T>($: Engine, work: Promise<T>): Promise<T | 'timeout'> {
   }
 }
 
+/**
+ * POST /event with body `{}`: an Agent Office app from before `/state` answers 400 ("not a hook
+ * event") once the token matches. The status, or 'refused' when nothing answered in time.
+ */
+async function eventCheck($: Engine, cfg: OfficeConfig): Promise<number | 'refused'> {
+  const sent = $.http
+    .fetch(`http://127.0.0.1:${cfg.port}/event`, {
+      method: 'POST',
+      headers: { 'X-Agent-Office-Token': cfg.token, 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    .then(
+      r => r.status,
+      () => 'refused' as const,
+    )
+  const got = await bounded($, sent)
+  return got === 'timeout' ? 'refused' : got
+}
+
 async function probe($: Engine, cfg: OfficeConfig): Promise<ProbeResult> {
   const asked = $.http
     .fetch(`http://127.0.0.1:${cfg.port}/state`, { headers: { 'X-Agent-Office-Token': cfg.token } })
@@ -118,8 +137,22 @@ async function probe($: Engine, cfg: OfficeConfig): Promise<ProbeResult> {
   } catch {
     json = undefined
   }
-  const kind = classifyProbe({ status: got.status, json })
+  const res = { status: got.status, json }
+  const kind = classifyProbe(res, needsEventCheck(res) ? await eventCheck($, cfg) : undefined)
   return kind === 'ours' ? { kind, info: json as StateInfo } : { kind }
+}
+
+/** The reply for a port held by something that is not a usable tracker, or undefined. */
+function notUsable(kind: Probe, port: number): string | undefined {
+  if (kind === 'foreign') return MESSAGES.foreignPort(port)
+  if (kind === 'older') return MESSAGES.older(port)
+  if (kind === 'badToken') return MESSAGES.badToken(port)
+  return undefined
+}
+
+async function onTerminal($: Engine): Promise<boolean> {
+  const surfaces: readonly string[] = await $.session.surfaces().catch(() => [])
+  return surfaces.includes('terminal')
 }
 
 /** POST /shutdown; the HTTP status, or 0 when nothing answered in time. */
@@ -162,7 +195,7 @@ async function launch($: Engine): Promise<Launch> {
     if (r.exitCode === 3) return 'no-node'
     return r.exitCode === 0 ? 'ok' : { exitCode: r.exitCode }
   } catch {
-    // $.process is CLI only: a desktop, mobile or SDK host refuses it
+    // $.process is CLI only: a desktop, mobile or SDK host refuses it (on the terminal, the run failed)
     return 'no-process'
   }
 }
@@ -181,7 +214,8 @@ async function openOffice($: Engine): Promise<string> {
 
   let cfg = await readConfig($, cfgPath)
   let found: ProbeResult = cfg ? await probe($, cfg) : { kind: 'down' }
-  if (found.kind === 'foreign' && cfg) return MESSAGES.foreignPort(cfg.port)
+  const refused = cfg ? notUsable(found.kind, cfg.port) : undefined
+  if (refused) return refused
 
   // a tracker of an older (or newer) plugin: restart it, unless the app runs it
   let note: string | undefined
@@ -201,7 +235,7 @@ async function openOffice($: Engine): Promise<string> {
   let started = false
   if (found.kind === 'down') {
     const launched = await launch($)
-    if (launched === 'no-process') return MESSAGES.noProcess
+    if (launched === 'no-process') return (await onTerminal($)) ? MESSAGES.launcherFailed(dir) : MESSAGES.noProcess
     if (launched === 'no-node') return MESSAGES.nodeMissing
     if (launched !== 'ok') {
       return `Couldn't start the office tracker (exit ${launched.exitCode}). See ${dir}/tracker.log.`
@@ -214,7 +248,8 @@ async function openOffice($: Engine): Promise<string> {
       return p.kind === 'down' ? undefined : { cfg: c, found: p }
     })
     if (!up) return `The office tracker didn't answer within 3 seconds. See ${dir}/tracker.log.`
-    if (up.found.kind === 'foreign') return MESSAGES.foreignPort(up.cfg.port)
+    const upRefused = notUsable(up.found.kind, up.cfg.port)
+    if (upRefused) return upRefused
     cfg = up.cfg
     found = up.found
   }
@@ -250,7 +285,8 @@ let pollTimer: Timer | undefined
 let animTimer: Timer | undefined
 let inflight: Promise<void> | undefined
 let cfgCache: OfficeConfig | null = null
-let lastSeq: number | undefined
+/** `<tracker>#<seq>` of the snapshot last written: a restarted tracker counts seq from 0 again */
+let lastKey: string | undefined
 let lastState: PxState | null = null
 let lastReach: AgentOfficeReach | undefined
 let frame = 0
@@ -309,22 +345,23 @@ async function pollOnce($: Engine): Promise<void> {
     const r: AgentOfficeReach = snap ? 'up' : 'down'
     if (!snap) {
       cfgCache = null
-      lastSeq = undefined
+      lastKey = undefined
     }
     // remembered only once written: a failed write is tried again on the next poll
     if (r !== lastReach) {
       const wrote = await update($, reach, () => r).then(() => true, () => false)
       lastReach = wrote ? r : undefined
     }
-    if (snap && snap.seq !== lastSeq) {
+    const key = snap ? `${snap.tracker ?? ''}#${snap.seq}` : undefined
+    if (snap && key !== lastKey) {
       const wrote = await update($, snapshot, () => snap).then(() => true, () => false)
       if (wrote) {
         const fresh = startAnims(diffStates(lastState, snap.state), lastState, snap.state, frame)
         anims = [...anims.filter(a => isAnimLive(a, frame)), ...fresh]
-        lastSeq = snap.seq
+        lastKey = key
         lastState = snap.state
       } else {
-        lastSeq = undefined
+        lastKey = undefined
       }
     }
     await checkPane($)

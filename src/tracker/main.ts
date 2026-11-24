@@ -18,7 +18,9 @@ function flag(name: string): string | undefined {
 
 const dir = process.env.AGENT_OFFICE_DIR || join(homedir(), '.agent-office');
 const log = makeLogger(dir);
-const startedBy: StartedBy = flag('started-by') === 'plugin' ? 'plugin' : 'app';
+// `--started-by plugin|app|serve`; with no flag (a hand-run tracker) it is 'serve', never the app
+const given = flag('started-by');
+const startedBy: StartedBy = given === 'plugin' || given === 'app' ? given : 'serve';
 const idleMin = Number(flag('idle-exit-min') ?? 30);
 const staticDir = join(dirname(fileURLToPath(import.meta.url)), 'scene');
 const pidFile = join(dir, 'tracker.pid');

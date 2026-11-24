@@ -24,6 +24,8 @@ type World = {
   config?: true | 'after-launch'
   appInstalled?: boolean
   shutdown?: number
+  /** status POST /event answers (default 404) */
+  event?: number
   /** what ui.panes says of the pane's seat (default placed) */
   placed?: boolean
 }
@@ -32,6 +34,7 @@ function world(on: On, w: World) {
   const runs: string[][] = []
   const opened: string[] = []
   const posts: { url: string; headers: Record<string, string> }[] = []
+  const events: { headers: Record<string, string>; body: unknown }[] = []
   let launched = false
   let probes = 0
 
@@ -85,6 +88,11 @@ function world(on: On, w: World) {
   })
   on('http.fetch', (_, e) => {
     const headers = (e.init?.headers ?? {}) as Record<string, string>
+    if (e.url.endsWith('/event')) {
+      events.push({ headers, body: e.init?.body })
+      const status = w.event ?? 404
+      return { value: { status, ok: status < 300, headers: {}, text: '' } }
+    }
     if (e.url.endsWith('/shutdown')) {
       posts.push({ url: e.url, headers })
       const status = w.shutdown ?? 202
@@ -102,6 +110,7 @@ function world(on: On, w: World) {
     runs,
     opened,
     posts,
+    events,
     clock,
     probes: () => probes,
     /** the person closes the pane: the engine lists it no more */
@@ -197,8 +206,43 @@ test('/office reports a foreign port', async ($, on) => {
   expect(w.opened).toEqual([])
 })
 
+test('/office names an older Agent Office app (no /state, but /event answers 400)', async ($, on) => {
+  const w = world(on, { state: [{ status: 404, text: 'not found' }], event: 400 })
+  const text = await office($)
+
+  expect(w.events.length).toBe(1)
+  expect(w.events[0]?.headers['X-Agent-Office-Token']).toBe(TOKEN)
+  expect(w.events[0]?.body).toBe('{}')
+  expect(w.runs.length).toBe(0)
+  expect(w.opened).toEqual([])
+  expect(text).toBe(
+    `An older Agent Office app is running on port ${PORT}. Rebuild and restart it (or quit it) to use /office.`,
+  )
+})
+
+test('/office reports a tracker with a different token', async ($, on) => {
+  const w = world(on, { state: [{ status: 401, text: 'unauthorized' }] })
+  const text = await office($)
+
+  expect(w.events.length).toBe(0)
+  expect(w.runs.length).toBe(0)
+  expect(w.opened).toEqual([])
+  expect(text).toBe(
+    `The office tracker on port ${PORT} uses a different token. Restart it, or check ~/.agent-office/config.json.`,
+  )
+})
+
+test('/office on the terminal reports a launcher that failed to run', async ($, on) => {
+  world(on, { state: ['refused'], launch: 'deny' })
+  on('session.surfaces', () => ({ value: ['terminal'] as const }))
+  expect(await office($)).toBe(
+    `Couldn't start the office tracker (the launcher failed). See ${DIR}/tracker.log.`,
+  )
+})
+
 test('/office on a surface that cannot run processes points to the terminal', async ($, on) => {
   world(on, { state: ['refused'], launch: 'deny' })
+  on('session.surfaces', () => ({ value: ['desktop'] as const }))
   expect(await office($)).toBe(
     'Run /office once in terminal Claude, or open the Agent Office app.',
   )
@@ -385,6 +429,21 @@ test('a tracker that stops answering shows the not-running line, then the office
   await w.clock.advance(1000)
   await w.clock.advance(1000)
   expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  await ui.unmount()
+})
+
+const ONE = { sessions: { s1: room('s1', 'gamma', [helper('s1', 'g1', 'Explore', 'look')]) } }
+
+test('a tracker restarted at the same seq still refreshes the pane', async ($, on) => {
+  const before = ours({ seq: 2, startedAt: 1000, state: TWO })
+  const w = world(on, { state: [before, before, ours({ seq: 2, startedAt: 2000, state: ONE })] })
+  await office($) // probe + first poll: the first run
+  const ui = await mountPane($, 'terminal')
+  expect((await ui.findAll({ type: 'Button' })).map(c => c.text)).toContain('alpha: boss')
+  await w.clock.advance(1000) // a new run answers, its seq back at 2
+  const after = (await ui.findAll({ type: 'Button' })).map(c => c.text)
+  expect(after).toContain('gamma: boss')
+  expect(after).not.toContain('alpha: boss')
   await ui.unmount()
 })
 

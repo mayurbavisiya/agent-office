@@ -37,7 +37,8 @@ export type PxSession = {
   floorSince?: number;
 };
 export type PxState = { sessions: Record<string, PxSession> };
-export type Snapshot = { seq: number; state: PxState };
+/** `tracker`: which tracker run answered (`<version>@<startedAt>`), so a restart that resets `seq` still reads as new. */
+export type Snapshot = { seq: number; tracker?: string; state: PxState };
 
 export type AnimEvent = { kind: 'spawn' | 'handoff' | 'exit'; sessionId: string; agentId: string };
 /** An animation in flight: the event, the frame it began on, the walker's colour and desk slot. */
@@ -227,7 +228,8 @@ export function parseSnapshot(body: unknown): Snapshot | null {
     const s = parseSession(raw);
     if (s) sessions[s.id] = s;
   }
-  return { seq: num(body.seq), state: { sessions } };
+  const version = typeof body.version === 'string' ? body.version : '';
+  return { seq: num(body.seq), tracker: `${version}@${num(body.startedAt)}`, state: { sessions } };
 }
 
 // ---- diffs and animations ----
@@ -614,7 +616,7 @@ export function clipLabel(label: string, max = 18): string {
 export function chipsOf(model: PanelModel): Chip[] {
   if (model.mode !== 'rooms') return [];
   return model.rooms.flatMap(r => [
-    { label: `${clipLabel(r.label, 12)}: boss`, sessionId: r.sessionId, agentId: 'boss' as const },
+    { label: `${clipLabel(r.label.trim() || DASH, 12)}: boss`, sessionId: r.sessionId, agentId: 'boss' as const },
     ...r.helpers.map(h => ({ label: h.label, sessionId: r.sessionId, agentId: h.agentId })),
   ]);
 }

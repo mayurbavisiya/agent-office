@@ -38,7 +38,7 @@ The person wants Agent Office to be "easy to use": nobody should clone the repo 
    - The panel gets its state by polling the tracker over localhost about once a second, with `$.http.fetch` and the token.
    - It lays itself out for the room it's given. It must stay legible at the minimum pane width the engine seats (about 40 columns). When there are many sessions, it shows as many rooms as fit, plus "+N more".
    - On a non-terminal surface (desktop app, VS Code), fall back to a text list of rooms and agents, or SVG where the surface has `Svg`. Terminal is the target.
-4. **A new read-only state endpoint on the tracker**: `GET /state` returns the current `OfficeState` snapshot as JSON and requires the token (header). The scene's WebSocket stays as it is.
+4. **A new read-only state endpoint on the tracker**: `GET /state` returns the current `OfficeState` snapshot as JSON and requires the token (header). The scene's WebSocket stays as it is. The body is `{ version, startedBy, startedAt, seq, state }`: `startedAt` is when that tracker run started (ms since the epoch), and `seq` counts store changes from 0 in each run, so the panel keys "snapshot changed" on `version` + `startedAt` + `seq`.
 5. **The full office** is the existing scene with the human characters, served by the same tracker at `/`. Browser and desktop app work the same as today.
 
 ## Non-goals

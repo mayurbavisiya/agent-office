@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startApp, type App } from '../core/app.js';
 import { loadOrCreateConfig } from '../shared/config.js';
+import { startOrTakeOver } from './portTakeover.js';
 import { isAllowedUrl } from './urlGuard.js';
 import { workingCount } from '../shared/counts.js';
 import { loadWindowState, saveWindowState, type WindowState } from './windowState.js';
@@ -203,11 +204,11 @@ function createTray(): void {
 
 /** `portInUse`: the hint about another copy / another program on the port is shown only then. */
 function showError(message: string, portInUse: boolean): void {
-  const w = new BrowserWindow({ width: 440, height: 170, resizable: false, title: 'Agent Office', webPreferences: { sandbox: true, contextIsolation: true } });
+  const w = new BrowserWindow({ width: 440, height: 220, resizable: false, title: 'Agent Office', webPreferences: { sandbox: true, contextIsolation: true } });
   const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
   const page = `<body style="font:14px system-ui;padding:20px"><h3 style="margin-top:0">Agent Office could not start</h3><p>${esc(message)}</p>${
     portInUse
-      ? `<p style="color:#666">Another copy may already be running, or another program is using this port. Change the port in ${esc(dataDir)}/config.json if needed.</p>`
+      ? `<p style="color:#666">Another copy may already be running, or another program is using this port. Change the port in ${esc(dataDir)}/config.json if needed.</p><p style="color:#666">If the Agent Office plugin's tracker is using the port, run /office stop, then reopen the app.</p>`
       : `<p style="color:#666">Settings are in ${esc(dataDir)}/config.json.</p>`
   }</body>`;
   void w.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(page)}`);
@@ -245,15 +246,18 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.dock?.hide();
-    try {
-      office = await startApp({ configDir: dataDir, staticDir: join(root, 'dist', 'scene') });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+    // a tracker the plugin started (/office) holding the port is stopped and the start tried once more
+    const started = await startOrTakeOver(
+      () => startApp({ configDir: dataDir, staticDir: join(root, 'dist', 'scene') }),
+      () => loadOrCreateConfig(dataDir),
+    );
+    if ('error' in started) {
+      const msg = started.error;
       log('startApp failed', msg);
-      const inUse = /EADDRINUSE|in use/i.test(msg);
-      showError(inUse ? `The office port is already in use. ${msg}` : msg, inUse);
+      showError(started.inUse ? `The office port is already in use. ${msg}` : msg, started.inUse);
       return;
     }
+    office = started.app;
     token = loadOrCreateConfig(dataDir).token;
     log('server up', office.url);
     createWindow();

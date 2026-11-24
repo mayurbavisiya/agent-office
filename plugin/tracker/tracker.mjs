@@ -3868,7 +3868,7 @@ var MIME = {
   ".map": "application/json; charset=utf-8"
 };
 var digest = (s) => createHash("sha256").update(s).digest();
-var tokenOk = (given, expected) => typeof given === "string" && timingSafeEqual(digest(given), digest(expected));
+var tokenOk = (given2, expected) => typeof given2 === "string" && timingSafeEqual(digest(given2), digest(expected));
 function reply(res, status, body = "", headers = {}) {
   res.writeHead(status, { "Cache-Control": "no-store", ...headers });
   res.end(body);
@@ -3878,6 +3878,7 @@ function startEventServer(opts) {
   const version2 = opts.version ?? "0.0.0";
   const startedBy2 = opts.startedBy ?? "app";
   let seq = 0;
+  const startedAt = Date.now();
   const root = resolve(opts.staticDir);
   const wss = new import_websocket_server.default({ noServer: true });
   const clients = /* @__PURE__ */ new Set();
@@ -3949,7 +3950,7 @@ function startEventServer(opts) {
   }
   function handleState(req, res) {
     if (!tokenOk(req.headers["x-agent-office-token"], token)) return reply(res, 401, "unauthorized");
-    reply(res, 200, JSON.stringify({ version: version2, startedBy: startedBy2, seq, state: store.snapshot() }), { "Content-Type": "application/json; charset=utf-8" });
+    reply(res, 200, JSON.stringify({ version: version2, startedBy: startedBy2, startedAt, seq, state: store.snapshot() }), { "Content-Type": "application/json; charset=utf-8" });
   }
   function handleShutdown(req, res) {
     req.resume();
@@ -5289,7 +5290,8 @@ function flag(name) {
 }
 var dir = process.env.AGENT_OFFICE_DIR || join6(homedir2(), ".agent-office");
 var log = makeLogger(dir);
-var startedBy = flag("started-by") === "plugin" ? "plugin" : "app";
+var given = flag("started-by");
+var startedBy = given === "plugin" || given === "app" ? given : "serve";
 var idleMin = Number(flag("idle-exit-min") ?? 30);
 var staticDir = join6(dirname2(fileURLToPath2(import.meta.url)), "scene");
 var pidFile = join6(dir, "tracker.pid");

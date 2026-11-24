@@ -4,6 +4,7 @@ import { looksFor } from '../src/scene/looks.js';
 import { MODELS } from '../src/core/pricing.js';
 import {
   PRICES,
+  chipsOf,
   clipLabel,
   TYPE_COLORS,
   colorFor,
@@ -99,6 +100,14 @@ describe('diffStates', () => {
   });
   it('the first snapshot animates nothing', () => {
     expect(diffStates(null, office(2))).toEqual([]);
+  });
+});
+
+describe('chipsOf', () => {
+  it('falls back to a dash for a room with an empty label', () => {
+    const st: OfficeState = { sessions: { s0: session('s0', { label: '' }) } };
+    const m = layoutPanel(st, 40, 40);
+    expect(chipsOf(m)[0]!.label).toBe('—: boss');
   });
 });
 
@@ -310,6 +319,14 @@ describe('parseSnapshot', () => {
     expect(Object.keys(snap!.state.sessions).sort()).toEqual(['s', 't']);
     expect(Object.keys(snap!.state.sessions.t!.agents)).toEqual([]);
     expect(snap!.state.sessions.s!.agents.a1!.type).toBe('Explore');
+  });
+  it('carries a tracker identity from version and startedAt', () => {
+    const a = parseSnapshot({ version: '0.1.0', startedAt: 111, seq: 2, state: { sessions: {} } });
+    const b = parseSnapshot({ version: '0.1.0', startedAt: 222, seq: 2, state: { sessions: {} } });
+    const c = parseSnapshot({ version: '0.2.0', startedAt: 111, seq: 2, state: { sessions: {} } });
+    expect(a?.tracker).toBe('0.1.0@111');
+    expect(new Set([a?.tracker, b?.tracker, c?.tracker]).size).toBe(3);
+    expect(parseSnapshot({ seq: 2, state: { sessions: {} } })?.tracker).toBe('@0');
   });
   it('answers null for garbage', () => {
     expect(parseSnapshot('x')).toBeNull();

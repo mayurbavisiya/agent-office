@@ -1,12 +1,14 @@
 import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 
 const root = join(import.meta.dirname, '..');
-const bundle = join(root, 'plugin', 'tracker', 'tracker.mjs');
+// the spawn tests run the committed bundle; the build goes to a temp dir and is compared with it
+const committed = join(root, 'plugin', 'tracker');
+const bundle = join(committed, 'tracker.mjs');
 const procs: ChildProcess[] = [];
 afterEach(() => {
   while (procs.length) procs.pop()!.kill();
@@ -20,8 +22,15 @@ const freePort = () =>
     });
   });
 
-function launch(dir: string): ChildProcess {
-  const p = spawn('node', [bundle, '--started-by', 'plugin'], { env: { ...process.env, AGENT_OFFICE_DIR: dir, CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), 'ao-cl-')) }, stdio: 'ignore' });
+/** Every file under `dir`, relative, sorted. */
+function files(dir: string, rel = ''): string[] {
+  return readdirSync(join(dir, rel), { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? files(dir, join(rel, e.name)) : [join(rel, e.name)]))
+    .sort();
+}
+
+function launch(dir: string, args: string[] = ['--started-by', 'plugin']): ChildProcess {
+  const p = spawn('node', [bundle, ...args], { env: { ...process.env, AGENT_OFFICE_DIR: dir, CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), 'ao-cl-')) }, stdio: 'ignore' });
   procs.push(p);
   return p;
 }
@@ -36,10 +45,39 @@ async function until<T>(f: () => Promise<T | undefined>, ms = 5000): Promise<T> 
 }
 
 describe('tracker bundle', () => {
+  let built = '';
   beforeAll(() => {
-    execFileSync('npm', ['run', 'build:scene'], { cwd: root, stdio: 'ignore' });
-    execFileSync('npm', ['run', 'build:plugin'], { cwd: root, stdio: 'ignore' });
+    const tmp = mkdtempSync(join(tmpdir(), 'ao-build-'));
+    const scene = join(tmp, 'scene-dist');
+    built = join(tmp, 'tracker');
+    execFileSync('npx', ['tsx', 'tools/build-scene.ts', '--out', scene], { cwd: root, stdio: 'ignore' });
+    execFileSync('npx', ['tsx', 'tools/build-plugin.ts', '--scene', scene, '--out', built], { cwd: root, stdio: 'ignore' });
   }, 60000);
+
+  it('the committed plugin/tracker matches a fresh build, byte for byte', () => {
+    expect(files(built)).toEqual(files(committed));
+    for (const f of files(committed)) {
+      expect(readFileSync(join(built, f)).equals(readFileSync(join(committed, f))), f).toBe(true);
+    }
+  });
+
+  it('targets node 20, the oldest the launcher accepts', () => {
+    const src = readFileSync(join(root, 'tools', 'build-plugin.ts'), 'utf8');
+    expect(src).toMatch(/target: 'node20'/);
+    expect(readFileSync(join(root, 'plugin', 'scripts', 'launch-tracker.sh'), 'utf8')).toMatch(/20/);
+  });
+
+  it('a tracker started with no --started-by says serve', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ao-tr-'));
+    const port = await freePort();
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ port, token: 'tok' }));
+    launch(dir, []);
+    const st = await until(async () => {
+      const r = await fetch(`http://127.0.0.1:${port}/state`, { headers: { 'X-Agent-Office-Token': 'tok' } });
+      return r.status === 200 ? await r.json() : undefined;
+    });
+    expect(st.startedBy).toBe('serve');
+  }, 20000);
 
   it('runs under plain node', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ao-tr-'));

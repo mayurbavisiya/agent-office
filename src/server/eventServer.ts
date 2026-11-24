@@ -42,6 +42,8 @@ export function startEventServer(opts: { port: number; token: string; store: Off
   const startedBy: StartedBy = opts.startedBy ?? 'app';
   /** bumped on every store change, whether or not a client is listening */
   let seq = 0;
+  /** when this server started (ms since the epoch): with `version`, tells one tracker run from the next */
+  const startedAt = Date.now();
   const root = resolve(opts.staticDir);
   const wss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
@@ -116,9 +118,13 @@ export function startEventServer(opts: { port: number; token: string; store: Off
     });
   }
 
+  /**
+   * `GET /state` (token in `X-Agent-Office-Token`): `{ version, startedBy, startedAt, seq, state }`.
+   * `seq` restarts at 0 with each run, so a reader keys "changed" on `version` + `startedAt` + `seq`.
+   */
   function handleState(req: IncomingMessage, res: ServerResponse): void {
     if (!tokenOk(req.headers['x-agent-office-token'], token)) return reply(res, 401, 'unauthorized');
-    reply(res, 200, JSON.stringify({ version, startedBy, seq, state: store.snapshot() }), { 'Content-Type': 'application/json; charset=utf-8' });
+    reply(res, 200, JSON.stringify({ version, startedBy, startedAt, seq, state: store.snapshot() }), { 'Content-Type': 'application/json; charset=utf-8' });
   }
 
   /** `/office stop`: only a tracker the plugin started stops this way; the app quits from its menu. */

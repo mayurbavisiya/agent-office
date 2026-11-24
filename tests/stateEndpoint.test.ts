@@ -39,6 +39,8 @@ describe('GET /state', () => {
     expect(b.version).toBe('9.9.9');
     expect(b.startedBy).toBe('plugin');
     expect(typeof b.seq).toBe('number');
+    expect(typeof b.startedAt).toBe('number');
+    expect(Math.abs(b.startedAt - Date.now())).toBeLessThan(60_000);
     expect(b.state.sessions).toEqual({});
   });
 

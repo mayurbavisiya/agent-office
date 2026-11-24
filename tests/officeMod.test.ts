@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { classifyProbe, formatReply, parseConfig } from '../plugin/mod/office.js';
+import { MESSAGES, classifyProbe, formatReply, needsEventCheck, parseConfig } from '../plugin/mod/office.js';
 
 describe('parseConfig', () => {
   it('reads port and token', () => {
@@ -32,7 +32,26 @@ describe('classifyProbe', () => {
     expect(classifyProbe({ status: 200 })).toBe('foreign');
     expect(classifyProbe({ status: 200, json: 'text' })).toBe('foreign');
     expect(classifyProbe({ status: 404 })).toBe('foreign');
-    expect(classifyProbe({ status: 401, json: { version: '1', state: {} } })).toBe('foreign');
+    expect(classifyProbe({ status: 404 }, 404)).toBe('foreign');
+    expect(classifyProbe({ status: 404 }, 401)).toBe('foreign');
+    expect(classifyProbe({ status: 404 }, 'refused')).toBe('foreign');
+    // a 200 that is not ours stays foreign whatever /event said
+    expect(classifyProbe({ status: 200, json: { hello: 1 } }, 400)).toBe('foreign');
+  });
+  it('badToken: /state answers 401', () => {
+    expect(classifyProbe({ status: 401, json: { version: '1', state: {} } })).toBe('badToken');
+    expect(classifyProbe({ status: 401 })).toBe('badToken');
+  });
+  it('older: /state is not a 200 but POST /event {} answers 400', () => {
+    expect(classifyProbe({ status: 404 }, 400)).toBe('older');
+    expect(classifyProbe({ status: 405 }, 400)).toBe('older');
+  });
+  it('needsEventCheck: only a non-200, non-401 answer', () => {
+    expect(needsEventCheck({ status: 404 })).toBe(true);
+    expect(needsEventCheck({ status: 500 })).toBe(true);
+    expect(needsEventCheck({ status: 200, json: { hello: 1 } })).toBe(false);
+    expect(needsEventCheck({ status: 401 })).toBe(false);
+    expect(needsEventCheck('refused')).toBe(false);
   });
   it('down: refused or timed out', () => {
     expect(classifyProbe('refused')).toBe('down');
@@ -53,6 +72,14 @@ describe('formatReply', () => {
   it('says whether it started the tracker', () => {
     expect(formatReply({ ...base, appInstalled: false })).toMatch(/started/i);
     expect(formatReply({ ...base, started: false, appInstalled: false })).not.toMatch(/started/i);
+  });
+});
+
+describe('MESSAGES', () => {
+  it('names an older app and a different token', () => {
+    expect(MESSAGES.older(47999)).toBe('An older Agent Office app is running on port 47999. Rebuild and restart it (or quit it) to use /office.');
+    expect(MESSAGES.badToken(47999)).toBe('The office tracker on port 47999 uses a different token. Restart it, or check ~/.agent-office/config.json.');
+    expect(MESSAGES.launcherFailed('/x/.agent-office')).toBe("Couldn't start the office tracker (the launcher failed). See /x/.agent-office/tracker.log.");
   });
 });
 
