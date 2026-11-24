@@ -290,7 +290,7 @@ test('the pane draws the office: a Raster keyed office and one chip per characte
   expect(raster).toBeDefined()
   expect(raster?.props.columns).toBe(60)
   const chips = await ui.findAll({ type: 'Button' })
-  expect(chips.map(c => c.text)).toEqual(['boss', 'Explore', 'boss', 'Plan', 'general-purpose'])
+  expect(chips.map(c => c.text)).toEqual(['alpha: boss', 'Explore', 'beta: boss', 'Plan', 'general-purpose'])
   await ui.unmount()
 })
 
@@ -371,6 +371,33 @@ test('no blits while the pane is not placed', async ($, on) => {
   await w.clock.advance(1000)
   expect(blits).toBe(0)
   await ui.unmount()
+})
+
+test('a tracker that stops answering shows the not-running line, then the office again', async ($, on) => {
+  const up = ours({ seq: 2, state: TWO })
+  const w = world(on, { state: [up, up, 'refused', 'refused', ours({ seq: 5, state: TWO })] })
+  await office($) // probe + first poll: up
+  const ui = await mountPane($, 'terminal')
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  await w.clock.advance(1000)
+  expect((await ui.find({ type: 'Text', text: /not running/ }))?.text).toBe('office tracker not running — run /office')
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+  await w.clock.advance(1000)
+  await w.clock.advance(1000)
+  expect(await ui.find({ type: 'Raster', key: 'office' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an inline pane never draws taller than its body', async ($, on) => {
+  world(on, { state: [ours({ seq: 2, state: TWO })] })
+  await office($)
+  for (const [cols, rows] of [[60, 5], [60, 6], [60, 8], [120, 8], [40, 40]] as const) {
+    const ui = await mountPane($, 'terminal', cols, rows)
+    const raster = await ui.find({ type: 'Raster', key: 'office' })
+    const used = (raster ? Number(raster.props.rows) : 1) + 2 // chips take at most 2 rows
+    expect(used).toBeLessThanOrEqual(rows)
+    await ui.unmount()
+  }
 })
 
 test('no timers run in a session that never opened the panel', async ($, on) => {

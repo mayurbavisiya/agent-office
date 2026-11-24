@@ -604,11 +604,17 @@ function drawRoom(cv: Canvas, room: RoomModel, frame: number, anims: ActiveAnim[
   }
 }
 
+/** A label cut to `max` characters (default 18, as fitChips counts), an ellipsis marking the cut. */
+export function clipLabel(label: string, max = 18): string {
+  const chars = [...label.replace(/\s+/g, ' ')];
+  return chars.length <= max ? chars.join('') : chars.slice(0, max - 1).join('') + '…';
+}
+
 /** The chips for the visible rooms' characters, boss first in each room. */
 export function chipsOf(model: PanelModel): Chip[] {
   if (model.mode !== 'rooms') return [];
   return model.rooms.flatMap(r => [
-    { label: 'boss', sessionId: r.sessionId, agentId: 'boss' as const },
+    { label: `${clipLabel(r.label, 12)}: boss`, sessionId: r.sessionId, agentId: 'boss' as const },
     ...r.helpers.map(h => ({ label: h.label, sessionId: r.sessionId, agentId: h.agentId })),
   ]);
 }
@@ -656,6 +662,8 @@ export function fitChips(chips: Chip[], cols: number, maxRows: number): { shown:
   return { shown, hidden: chips.length - shown.length };
 }
 
+const running = (start: number, end: number) => `running: ${start > 0 ? formatDuration(end - start) : DASH}`;
+
 export type Details = { title: string; lines: string[] };
 
 /** What a pressed chip shows, or null once that character left. */
@@ -678,7 +686,7 @@ export function detailsFor(state: PxState, sel: { sessionId: string; agentId: st
         `status: ${BOSS_WORDS[s.boss.status]}`,
         tokens(st),
         cost(st),
-        `running: ${formatDuration(now - s.boss.startedAt)}`,
+        running(s.boss.startedAt, now),
         last(st),
       ],
     };
@@ -694,7 +702,7 @@ export function detailsFor(state: PxState, sel: { sessionId: string; agentId: st
       `status: ${AGENT_WORDS[a.status]}`,
       tokens(st),
       cost(st),
-      `running: ${formatDuration((a.endedAt ?? now) - a.startedAt)}`,
+      running(a.startedAt, a.endedAt ?? now),
       last(st),
     ],
   };

@@ -4,6 +4,7 @@ import { looksFor } from '../src/scene/looks.js';
 import { MODELS } from '../src/core/pricing.js';
 import {
   PRICES,
+  clipLabel,
   TYPE_COLORS,
   colorFor,
   detailsFor,
@@ -193,7 +194,8 @@ describe('renderFrame', () => {
     const m = layoutPanel(office(2, 2), 40, 40);
     const { chips } = renderFrame(m, 40, 12, 0);
     expect(chips.map(c => c.agentId)).toEqual(['boss', 's0-a0', 's0-a1', 'boss', 's1-a0', 's1-a1']);
-    expect(chips[0]!.label).toBe('boss');
+    expect(chips[0]!.label).toBe('folder-s0: boss');
+    expect(chips[3]!.label).toBe('folder-s1: boss');
     expect(chips[1]!.label).toBe('Explore');
   });
   it('animates: a needs-you boss blinks between frames', () => {
@@ -237,6 +239,18 @@ describe('spriteFor', () => {
 });
 
 describe('chips', () => {
+  it('clipLabel cuts a chip label to 18 characters with an ellipsis', () => {
+    expect(clipLabel('short')).toBe('short');
+    const long = clipLabel('a-very-long-agent-type-name');
+    expect(long).toHaveLength(18);
+    expect(long.endsWith('…')).toBe(true);
+  });
+  it('a long room name is clipped in its boss chip', () => {
+    const st = office(1);
+    st.sessions.s0!.name = 'n'.repeat(40);
+    const m = layoutPanel(st, 40, 40);
+    expect(renderFrame(m, 40, 6, 0).chips[0]!.label).toBe('nnnnnnnnnnn…: boss');
+  });
   it('fitChips collapses what does not fit into +N', () => {
     const chips = Array.from({ length: 10 }, (_, i) => ({ label: `helper-${i}`, sessionId: 's', agentId: `a${i}` }));
     const { shown, hidden } = fitChips(chips, 40, 1);
@@ -278,6 +292,12 @@ describe('detailsFor', () => {
     expect(d!.title).toContain('boss');
     expect(d!.lines.join('\n')).toContain('waiting on team');
     expect(detailsFor(st, { sessionId: 's', agentId: 'zz' }, 0)).toBeNull();
+  });
+  it('shows a dash for running time when the start is unknown', () => {
+    const st = { sessions: { s: session('s', {}, [agent('s', 'a1', 'Explore', 'working', { startedAt: 0 })]) } };
+    st.sessions.s.boss.startedAt = 0;
+    expect(detailsFor(st, { sessionId: 's', agentId: 'a1' }, 99_000)!.lines).toContain('running: —');
+    expect(detailsFor(st, { sessionId: 's', agentId: 'boss' }, 99_000)!.lines).toContain('running: —');
   });
 });
 

@@ -8,6 +8,7 @@ import { MESSAGES, classifyProbe, formatReply, parseConfig } from '../mod/office
 import type { OfficeConfig, Probe } from '../mod/office'
 import {
   chipsOf,
+  clipLabel,
   detailsFor,
   diffStates,
   fitChips,
@@ -310,16 +311,21 @@ async function pollOnce($: Engine): Promise<void> {
       cfgCache = null
       lastSeq = undefined
     }
+    // remembered only once written: a failed write is tried again on the next poll
     if (r !== lastReach) {
-      lastReach = r
-      await update($, reach, () => r).catch(() => undefined)
+      const wrote = await update($, reach, () => r).then(() => true, () => false)
+      lastReach = wrote ? r : undefined
     }
     if (snap && snap.seq !== lastSeq) {
-      const fresh = startAnims(diffStates(lastState, snap.state), lastState, snap.state, frame)
-      anims = [...anims.filter(a => isAnimLive(a, frame)), ...fresh]
-      lastSeq = snap.seq
-      lastState = snap.state
-      await update($, snapshot, () => snap).catch(() => undefined)
+      const wrote = await update($, snapshot, () => snap).then(() => true, () => false)
+      if (wrote) {
+        const fresh = startAnims(diffStates(lastState, snap.state), lastState, snap.state, frame)
+        anims = [...anims.filter(a => isAnimLive(a, frame)), ...fresh]
+        lastSeq = snap.seq
+        lastState = snap.state
+      } else {
+        lastSeq = undefined
+      }
     }
     await checkPane($)
   }
@@ -400,7 +406,8 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    if (ensurePoll($)) void pollOnce($)
+    // never poll inside the draw (a state write there is denied): the first read runs off a timer
+    if (ensurePoll($)) $.clock.after(0, () => void pollOnce($))
     const [snap, r, sel] = await Promise.all([read($, snapshot), read($, reach), read($, selected)])
 
     if (r === 'down') {
@@ -437,7 +444,7 @@ export const register: Register = on => {
           {shown.map(c => (
             <Button
               key={`chip:${c.sessionId}:${c.agentId}`}
-              label={c.label}
+              label={clipLabel(c.label)}
               onPress={select({ sessionId: c.sessionId, agentId: c.agentId })}
             />
           ))}
@@ -461,7 +468,8 @@ export const register: Register = on => {
     }
 
     const { Raster } = $.ui.resolve(e)
-    const rowsGiven = Math.max(1, e.props.scroll.bodyRows - 1)
+    // the chips take up to CHIP_ROWS under the Raster; under 4 rows left, layoutPanel gives the summary
+    const rowsGiven = Math.max(0, e.props.scroll.bodyRows - CHIP_ROWS)
     const model = layoutPanel(snap.state, cols, rowsGiven, anims)
     if (model.mode === 'summary') {
       mounted = null
