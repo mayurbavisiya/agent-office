@@ -417,6 +417,34 @@ export function setDeskScreen(desk: SVGGElement, screen: Screen): void {
 }
 
 /** An office chair behind the seated character; the boss's is bigger, with a headrest and wheels. */
+/** The x (seat-local body units) of the visitor chair: past the far end of the boss's desk. */
+export const VISITOR_X = DESK_X + DESK_W + 14;
+
+/**
+ * The person's own chair, across the boss's desk and facing it. Dim while the lead works; with
+ * `waiting` (the lead is blocked on the person) it glows and shows a "your turn" tag (CSS: .waiting).
+ */
+export function renderVisitorChair(): SVGGElement {
+  const g = svgEl('g', { class: 'chair chair--visitor' });
+  const Y = SEAT_Y;
+  const backH = r1(RIG.torso * 0.9);
+  html(
+    g,
+    `<ellipse class="v-glow" cx="0" cy="0" rx="18" ry="4.5"/>
+    <g transform="scale(-1,1)">
+      <rect class="v-back" x="-11" y="${r1(Y - backH)}" width="4" height="${backH}" rx="1"/>
+      <rect class="v-seat" x="-11" y="${Y}" width="22" height="4" rx="1.5"/>
+      <rect x="-1" y="${Y + 4}" width="2" height="${HALF_LEG - 6}" fill="#3a3346"/>
+      <rect x="-8" y="-2" width="16" height="2" fill="#3a3346"/>
+    </g>
+    <g transform="translate(0,${r1(Y - backH - 12)})"><g class="v-tag">
+      <rect x="-21" y="-7" width="42" height="11" rx="5.5"/>
+      <text x="0" y="1.2" font-size="6.5" font-weight="700" text-anchor="middle">your turn</text>
+    </g></g>`,
+  );
+  return g;
+}
+
 export function renderChair(boss: boolean): SVGGElement {
   const g = svgEl('g', { class: boss ? 'chair chair--boss' : 'chair' });
   const Y = SEAT_Y;

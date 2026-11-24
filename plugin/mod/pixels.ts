@@ -297,7 +297,7 @@ function roomModel(s: PxSession): Omit<RoomModel, 'x' | 'y' | 'w' | 'h'> {
     label: roomLabel(s),
     boss: s.boss.status,
     helpers: helpers.map(a => ({ agentId: a.id, label: a.name || a.type, color: colorFor(a.type), status: a.status })),
-    status: `${BOSS_WORDS[s.boss.status]} · ${helpers.length} helper${helpers.length === 1 ? '' : 's'} · ${tokens} tokens in memory`,
+    status: `${s.boss.status === 'needs_you' ? '▶ your turn: ' : ''}${BOSS_WORDS[s.boss.status]} · ${helpers.length} helper${helpers.length === 1 ? '' : 's'} · ${tokens} tokens in memory`,
   };
 }
 

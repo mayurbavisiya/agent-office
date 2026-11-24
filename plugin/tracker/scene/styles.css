@@ -170,3 +170,18 @@ details.billing { margin: 8px 0 2px; font-size: 11px; color: #555; }
 details.billing summary { cursor: pointer; font-weight: 600; color: #777; }
 details.billing .bill-row { margin-top: 4px; }
 details.billing .bill-note { margin-top: 3px; color: #888; }
+
+/* the person's visitor chair at the boss's desk: dim until the lead needs a human decision */
+.chair--visitor .v-back { fill: #5a4a6a; }
+.chair--visitor .v-seat { fill: #6b5b7b; }
+.chair--visitor { opacity: .45; transition: opacity .3s; }
+.chair--visitor .v-glow { fill: #fbbf24; opacity: 0; }
+.chair--visitor .v-tag { opacity: 0; }
+.chair--visitor .v-tag rect { fill: #f59e0b; }
+.chair--visitor .v-tag text { fill: #1f1300; }
+.chair--visitor.waiting { opacity: 1; }
+.chair--visitor.waiting .v-back, .chair--visitor.waiting .v-seat { fill: #f59e0b; }
+.chair--visitor.waiting .v-glow { opacity: .55; animation: visitor-glow 1.6s ease-in-out infinite; }
+.chair--visitor.waiting .v-tag { opacity: 1; animation: visitor-tag 1.6s ease-in-out infinite; }
+@keyframes visitor-glow { 0%, 100% { opacity: .25 } 50% { opacity: .7 } }
+@keyframes visitor-tag { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-1.5px) } }

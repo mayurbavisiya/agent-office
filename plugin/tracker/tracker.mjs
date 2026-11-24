@@ -5284,7 +5284,7 @@ function makeLogger(dir2) {
 }
 
 // src/tracker/main.ts
-var version = true ? "0.1.2" : "0.0.0";
+var version = true ? "0.1.3" : "0.0.0";
 function flag(name) {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : void 0;

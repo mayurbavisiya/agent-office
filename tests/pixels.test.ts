@@ -158,7 +158,7 @@ describe('layoutPanel', () => {
     st.sessions.s.boss.stats.contextTokens = 500;
     const m = layoutPanel(st, 40, 40);
     if (m.mode !== 'rooms') throw new Error(m.mode);
-    expect(m.rooms[0]!.status).toBe('needs you · 1 helper · 2.0k tokens in memory');
+    expect(m.rooms[0]!.status).toBe('▶ your turn: needs you · 1 helper · 2.0k tokens in memory');
   });
   it('shows "—" tokens before any agent has finished a step', () => {
     const st = { sessions: { s: session('s', {}, [], 'working') } };

@@ -297,6 +297,23 @@ function handoffTarget(layout, agent) {
   return { x: layout.boss.x + 90 * layout.bossScale, y: layout.boss.y };
 }
 
+// src/shared/counts.ts
+function workingCount(s) {
+  if (s.status === "ended") return 0;
+  let n = s.boss.status === "working" || s.boss.status === "delegating" ? 1 : 0;
+  for (const a of Object.values(s.agents)) if (a.status === "working" || a.status === "spawning" || a.status === "handing_off") n++;
+  return n;
+}
+function needsYou(s) {
+  return s.status !== "ended" && s.boss.status === "needs_you";
+}
+function waitingOnYou(state) {
+  return Object.values(state.sessions).filter(needsYou).length;
+}
+function officeTitle(waiting) {
+  return waiting > 0 ? `(${waiting}) Agent Office` : "Agent Office";
+}
+
 // src/core/pricing.ts
 var MODELS = {
   "claude-fable-5-2": { inputPerM: 8, outputPerM: 40, cacheReadPerM: 0.2, cacheWritePerM: 16, contextSize: 1e6 },
@@ -871,6 +888,27 @@ function setDeskScreen(desk, screen) {
   scr.replaceChildren();
   html(scr, screenMarkup(screen));
 }
+var VISITOR_X = DESK_X + DESK_W + 14;
+function renderVisitorChair() {
+  const g = svgEl("g", { class: "chair chair--visitor" });
+  const Y = SEAT_Y;
+  const backH = r1(RIG.torso * 0.9);
+  html(
+    g,
+    `<ellipse class="v-glow" cx="0" cy="0" rx="18" ry="4.5"/>
+    <g transform="scale(-1,1)">
+      <rect class="v-back" x="-11" y="${r1(Y - backH)}" width="4" height="${backH}" rx="1"/>
+      <rect class="v-seat" x="-11" y="${Y}" width="22" height="4" rx="1.5"/>
+      <rect x="-1" y="${Y + 4}" width="2" height="${HALF_LEG - 6}" fill="#3a3346"/>
+      <rect x="-8" y="-2" width="16" height="2" fill="#3a3346"/>
+    </g>
+    <g transform="translate(0,${r1(Y - backH - 12)})"><g class="v-tag">
+      <rect x="-21" y="-7" width="42" height="11" rx="5.5"/>
+      <text x="0" y="1.2" font-size="6.5" font-weight="700" text-anchor="middle">your turn</text>
+    </g></g>`
+  );
+  return g;
+}
 function renderChair(boss) {
   const g = svgEl("g", { class: boss ? "chair chair--boss" : "chair" });
   const Y = SEAT_Y;
@@ -1010,7 +1048,7 @@ function drawBoard(board, bg, l, agents) {
 function placeDesk(desks, key, x, y, s, screen, sessionId) {
   const k = CSS.escape(key);
   const transform = `translate(${Math.round(x)},${Math.round(y)}) scale(${s})`;
-  let chair = desks.querySelector(`:scope > [data-chair-for="${k}"]`);
+  let chair = desks.querySelector(`:scope > [data-chair-for="${k}"]:not(.chair--visitor)`);
   if (!chair) {
     chair = renderChair(key === "boss");
     chair.dataset.chairFor = key;
@@ -1028,6 +1066,17 @@ function placeDesk(desks, key, x, y, s, screen, sessionId) {
   setDeskScreen(d, screen);
   d.setAttribute("transform", transform);
   return d;
+}
+function placeVisitor(desks, x, y, s, waiting, sessionId) {
+  let v = desks.querySelector(":scope > .chair--visitor");
+  if (!v) {
+    v = renderVisitorChair();
+    v.dataset.chairFor = "boss";
+    v.dataset.sessionId = sessionId;
+    desks.appendChild(v);
+  }
+  v.setAttribute("transform", `translate(${Math.round(x + VISITOR_X * s)},${Math.round(y)}) scale(${s})`);
+  v.classList.toggle("waiting", waiting);
 }
 function placeCharacter(people, opts, x, y) {
   let c = people.querySelector(`:scope > [data-agent-id="${CSS.escape(opts.id)}"]`);
@@ -1085,6 +1134,7 @@ function updateRoom(g, session, rect) {
   const keep = /* @__PURE__ */ new Set(["boss"]);
   const main = looksFor("main");
   placeDesk(desks, "boss", l.boss.x, l.boss.y, l.bossScale, "code", sid);
+  placeVisitor(desks, l.boss.x, l.boss.y, l.bossScale, needsYou(session), sid);
   placeCharacter(
     people,
     {
@@ -1213,14 +1263,6 @@ var Floor = class _Floor {
     return g ? layoutOf(g) : void 0;
   }
 };
-
-// src/shared/counts.ts
-function workingCount(s) {
-  if (s.status === "ended") return 0;
-  let n = s.boss.status === "working" || s.boss.status === "delegating" ? 1 : 0;
-  for (const a of Object.values(s.agents)) if (a.status === "working" || a.status === "spawning" || a.status === "handing_off") n++;
-  return n;
-}
 
 // src/scene/animator.ts
 var ROOM_ACTOR = "";
@@ -1750,6 +1792,8 @@ function markSelected() {
 }
 function refreshTags() {
   const { sessions } = floor.state;
+  const title = officeTitle(waitingOnYou(floor.state));
+  if (document.title !== title) document.title = title;
   for (const c of layer.querySelectorAll("g.char")) {
     const sess = sessions[c.dataset.sessionId ?? ""];
     const isBoss = c.dataset.agentId === "boss";

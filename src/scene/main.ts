@@ -6,7 +6,7 @@ import { InfoPanel } from './panel.js';
 import { setTok } from './tokTicker.js';
 import { hasUsage } from './panel.js';
 import { liveTokens } from './looks.js';
-import { workingCount } from '../shared/counts.js';
+import { officeTitle, waitingOnYou, workingCount } from '../shared/counts.js';
 import { bossLook, humanLook, looksFor, poseClass } from './looks.js';
 import { renderCharacter } from './characters.js';
 import type { OfficeState } from '../shared/types.js';
@@ -99,6 +99,8 @@ function markSelected(): void {
 /** Name-tag counters, from the latest state (called after renders and once a second). */
 function refreshTags(): void {
   const { sessions } = floor.state;
+  const title = officeTitle(waitingOnYou(floor.state));
+  if (document.title !== title) document.title = title;
   for (const c of layer.querySelectorAll<SVGGElement>('g.char')) {
     const sess = sessions[c.dataset.sessionId ?? ''];
     const isBoss = c.dataset.agentId === 'boss';

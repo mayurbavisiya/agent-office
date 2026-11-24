@@ -1,10 +1,11 @@
 // One room per session: a scaled-down office (wall, window, clock, whiteboard, door, the boss's
 // glass corner, desks) ported from the approved mockup. Browser-only.
+import { needsYou } from '../shared/counts.js';
 import type { Agent, AgentStats, Session } from '../shared/types.js';
 import { HEAD_TOP, roomLayout, SIGN_H, signText, TAG_H, type Rect, type RoomLayout } from './layout.js';
 import { agentLook, bossLook, humanLook, looksFor, poseClass, liveTokens, truncate } from './looks.js';
 import { formatTokens, hasUsage } from './panel.js';
-import { renderChair, renderCharacter, renderDesk, setDeskScreen, svgEl, updateCharacter, type CharacterOpts } from './characters.js';
+import { renderChair, renderCharacter, renderDesk, renderVisitorChair, VISITOR_X, setDeskScreen, svgEl, updateCharacter, type CharacterOpts } from './characters.js';
 
 const layouts = new WeakMap<SVGGElement, RoomLayout>();
 let clipSeq = 0;
@@ -141,7 +142,7 @@ function drawBoard(board: SVGGElement, bg: SVGGElement, l: RoomLayout, agents: A
 function placeDesk(desks: SVGGElement, key: string, x: number, y: number, s: number, screen: 'code' | 'err', sessionId: string): SVGGElement {
   const k = CSS.escape(key);
   const transform = `translate(${Math.round(x)},${Math.round(y)}) scale(${s})`;
-  let chair = desks.querySelector<SVGGElement>(`:scope > [data-chair-for="${k}"]`);
+  let chair = desks.querySelector<SVGGElement>(`:scope > [data-chair-for="${k}"]:not(.chair--visitor)`);
   if (!chair) {
     chair = renderChair(key === 'boss');
     chair.dataset.chairFor = key;
@@ -159,6 +160,19 @@ function placeDesk(desks: SVGGElement, key: string, x: number, y: number, s: num
   setDeskScreen(d, screen);
   d.setAttribute('transform', transform);
   return d;
+}
+
+/** The person's chair at the boss's desk; `waiting` lights it up (the lead needs a human decision). */
+function placeVisitor(desks: SVGGElement, x: number, y: number, s: number, waiting: boolean, sessionId: string): void {
+  let v = desks.querySelector<SVGGElement>(':scope > .chair--visitor');
+  if (!v) {
+    v = renderVisitorChair();
+    v.dataset.chairFor = 'boss'; // kept with the boss's desk by the stale-desk sweep
+    v.dataset.sessionId = sessionId;
+    desks.appendChild(v);
+  }
+  v.setAttribute('transform', `translate(${Math.round(x + VISITOR_X * s)},${Math.round(y)}) scale(${s})`);
+  v.classList.toggle('waiting', waiting);
 }
 
 function placeCharacter(people: SVGGElement, opts: CharacterOpts, x: number, y: number): SVGGElement {
@@ -232,6 +246,7 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
   // boss
   const main = looksFor('main');
   placeDesk(desks, 'boss', l.boss.x, l.boss.y, l.bossScale, 'code', sid);
+  placeVisitor(desks, l.boss.x, l.boss.y, l.bossScale, needsYou(session), sid);
   placeCharacter(
     people,
     {
