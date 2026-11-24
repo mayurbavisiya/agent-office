@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { cpSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverActiveSessions, startTimesMatch, subagentLogPath } from '../src/core/discovery.js';
+import { discoverActiveSessions, readMeta, readRegistry, startTimesMatch, subagentLogPath } from '../src/core/discovery.js';
 import { claudeDir } from '../src/shared/config.js';
 
 const FIX = join(__dirname, 'fixtures/logs');
@@ -137,6 +137,45 @@ describe('discoverActiveSessions', () => {
     mkdirSync(join(root, 'sessions'));
     writeFileSync(join(root, 'sessions', 'x.json'), 'nope');
     expect(discoverActiveSessions(root, NOW)).toEqual([]);
+  });
+
+  it('a subagent whose meta.json has no `finished` key counts as finished once its log is 10+ min old', () => {
+    const dir = build();
+    const log = join(subDir(dir), 'agent-a1c6ea8b5593d9948.jsonl');
+    const meta = log.replace(/\.jsonl$/, '.meta.json');
+    writeFileSync(meta, JSON.stringify({ agentType: 'Explore', description: 'x' }));
+    utimesSync(log, new Date(), new Date());
+    expect(readMeta(log).finished).toBe(false);
+    const old = new Date(Date.now() - 11 * 60_000);
+    utimesSync(log, old, old);
+    expect(readMeta(log).finished).toBe(true);
+    // an explicit `finished: false` is trusted whatever the log age
+    writeFileSync(meta, JSON.stringify({ agentType: 'Explore', finished: false }));
+    expect(readMeta(log).finished).toBe(false);
+  });
+
+  it('readRegistry returns null when entries parse but none has the expected shape (shape change)', () => {
+    root = mkdtempSync(join(tmpdir(), 'disc-'));
+    const reg = join(root, 'sessions');
+    mkdirSync(reg);
+    // truly empty dir: an empty registry
+    expect(readRegistry(root)).toEqual([]);
+    // only a half-written file: skipped, still an empty registry
+    writeFileSync(join(reg, '1.json'), '{"pid": 12');
+    expect(readRegistry(root)).toEqual([]);
+    // JSON that parses but in an unknown shape: the registry cannot be read, fall back
+    writeFileSync(join(reg, '2.json'), JSON.stringify({ processId: process.pid, id: 'sid-new-shape' }));
+    expect(readRegistry(root)).toBeNull();
+    // one well-formed entry (even a dead or non-interactive one) makes it a readable registry again
+    writeFileSync(join(reg, '3.json'), JSON.stringify({ pid: process.pid, sessionId: 'sid-bg', kind: 'background' }));
+    expect(readRegistry(root)).toEqual([]);
+  });
+
+  it('discovery uses the mtime window when the registry has only unknown-shape entries', () => {
+    const r = build();
+    mkdirSync(join(r, 'sessions'));
+    writeFileSync(join(r, 'sessions', 'x.json'), JSON.stringify({ processId: 1, id: 'z' }));
+    expect(discoverActiveSessions(r, NOW).map((s) => s.sessionId)).toEqual([S1]);
   });
 
   it('startTimesMatch compares parsed start times within 2 s and fails open', () => {

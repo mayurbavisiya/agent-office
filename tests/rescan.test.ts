@@ -233,6 +233,16 @@ describe('rescan', () => {
     expect(events).toContainEqual({ kind: 'shift_change', fromSessionId: 'OLD', toSessionId: 'NEW' });
   });
 
+  it('an empty registry at boot does not lock out the mtime fallback when entries later have an unknown shape', async () => {
+    const h = home();
+    const { app } = await boot(h.dir);
+    expect(Object.keys(app.store.snapshot().sessions)).toEqual([]);
+    // Claude Code changed the registry format: entries parse but have no pid/sessionId
+    writeFileSync(join(h.dir, 'sessions', '1.json'), JSON.stringify({ processId: process.pid, id: 'SHAPE' }));
+    writeFileSync(join(h.proj, 'SHAPE.jsonl'), line({ type: 'user' }));
+    await until(() => !!app.store.snapshot().sessions.SHAPE);
+  });
+
   it('a busy registry session that /clears keeps a working boss', async () => {
     const h = home();
     h.register(process.pid, 'OLD', { status: 'idle' });

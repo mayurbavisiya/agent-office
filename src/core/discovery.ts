@@ -6,7 +6,8 @@ import { basename, dirname, join } from 'node:path';
 export type DiscoveredSubagent = {
   agentId: string;
   path: string;
-  /** meta.json `finished === true`; missing/unreadable meta means assume running */
+  /** meta.json `finished === true`; missing/unreadable meta means assume running. A parsed meta with no
+   * `finished` key at all (a shape change) counts as finished once the log is STALE_AGENT_MS old. */
   finished: boolean;
   type?: string;
   description?: string;
@@ -45,6 +46,9 @@ export function subagentLogPath(_claudeDir: string, transcriptPath: string, agen
   return join(sessionDir, 'subagents', `agent-${agentId}.jsonl`);
 }
 
+/** A subagent log untouched this long, whose meta has no `finished` key, is taken as finished. */
+export const STALE_AGENT_MS = 600_000;
+
 /** Reads the sibling `agent-<id>.meta.json`; never throws. `hasMeta`: the file was read and parsed. */
 export function readMeta(logPath: string): Omit<DiscoveredSubagent, 'agentId' | 'path'> & { hasMeta?: boolean } {
   const out: Omit<DiscoveredSubagent, 'agentId' | 'path'> & { hasMeta?: boolean } = { finished: false };
@@ -53,7 +57,15 @@ export function readMeta(logPath: string): Omit<DiscoveredSubagent, 'agentId' | 
     if (typeof o !== 'object' || o === null) return out;
     out.hasMeta = true;
     const m = o as Record<string, unknown>;
-    out.finished = m.finished === true;
+    if ('finished' in m) out.finished = m.finished === true;
+    else {
+      // the key is gone (format change): don't keep an old agent running forever
+      try {
+        out.finished = Date.now() - statSync(logPath).mtimeMs >= STALE_AGENT_MS;
+      } catch {
+        out.finished = false;
+      }
+    }
     if (typeof m.agentType === 'string') out.type = m.agentType;
     if (typeof m.description === 'string') out.description = m.description;
     if (typeof m.toolUseId === 'string') out.toolUseId = m.toolUseId;
@@ -142,8 +154,10 @@ export function forgetPid(pid: number): void {
 
 /**
  * Live interactive entries of `$CLAUDE_DIR/sessions/*.json` (never the `.key` files).
- * Returns null only when the dir is missing (callers then fall back to the mtime scan); an existing dir with
- * no readable entries is an empty registry. An entry that fails to parse is skipped (it may be half-written).
+ * Returns null when the dir is missing, or when some entries parse as JSON but none has the expected shape
+ * (numeric `pid`, string `sessionId`: the format changed); callers then fall back to the mtime scan. An
+ * existing dir with no entries is an empty registry. An entry that fails to parse is skipped (it may be
+ * half-written).
  */
 export function readRegistry(claudeDir: string): RegistryEntry[] | null {
   const dir = join(claudeDir, 'sessions');
@@ -154,15 +168,19 @@ export function readRegistry(claudeDir: string): RegistryEntry[] | null {
     return null;
   }
   const out: RegistryEntry[] = [];
+  let parsed = 0;
+  let wellFormed = 0;
   for (const f of files) {
     if (!f.endsWith('.json')) continue;
     try {
       const o: unknown = JSON.parse(readFileSync(join(dir, f), 'utf8'));
+      parsed++;
       if (typeof o !== 'object' || o === null || Array.isArray(o)) continue;
       const m = o as Record<string, unknown>;
       const pid = m.pid;
       const sessionId = m.sessionId;
       if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0 || typeof sessionId !== 'string' || !sessionId) continue;
+      wellFormed++;
       if (m.kind !== undefined && m.kind !== 'interactive') continue;
       if (!pidAlive(pid)) {
         forgetPid(pid);
@@ -186,7 +204,7 @@ export function readRegistry(claudeDir: string): RegistryEntry[] | null {
       // unreadable or garbage: skip
     }
   }
-  return out;
+  return parsed > 0 && wellFormed === 0 ? null : out;
 }
 
 /** `<sessionId>.jsonl` in any project dir; tries the slug derived from cwd first. */

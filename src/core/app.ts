@@ -177,14 +177,15 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
     }
   };
 
-  let registrySeen = readRegistry(cdir) !== null;
+  /** a registry with at least one well-formed live entry was read (an empty dir proves nothing about its format) */
+  let registrySeen = !!readRegistry(cdir)?.length;
 
   /** Re-reads the session registry (or the mtime window without one) and reconciles the store with it. Never throws. */
   const rescan = (): void => {
     try {
-      // once a registry was seen, its later absence means "no sessions", never the mtime fallback
+      // once a well-formed registry was seen, its later absence means "no sessions", never the mtime fallback
       const found = readRegistry(cdir);
-      if (found) registrySeen = true;
+      if (found?.length) registrySeen = true;
       const reg = found ?? (registrySeen ? [] : null);
       if (!reg) {
         for (const l of recentMainLogs(cdir, Date.now())) if (!known.has(l.sessionId)) addSession(sessionFromLog(l.sessionId, l.mainLog));
