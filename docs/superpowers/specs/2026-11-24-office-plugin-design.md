@@ -1,6 +1,6 @@
 # Agent Office as a Claude plugin: pixel panel + `/office`
 
-**Status:** draft for the person's approval (2026-11-24).
+**Status:** approved by the person on 2026-11-24 ("go go go").
 **Builds on:** `2026-11-23-agent-office-design.md` (tracker, scene, desktop app) and `2026-11-24-human-characters-design.md`. Anything not mentioned here is unchanged.
 
 ## Intent and why
