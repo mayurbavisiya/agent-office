@@ -1,10 +1,41 @@
 # Agent Office
 
-Agent Office is a small floating desktop window that shows every running Claude Code session as a room in an animated cartoon office. Each room has a boss (the main agent) and flat-vector human characters (the subagents). Subagents walk in, sit at desks, carry their result to whoever spawned them, and walk out. There is also an optional Claude Code plugin that makes updates instant.
+Agent Office shows every running Claude Code session as a room in a small pixel office. Each room has a boss (the main agent) and pixel people (the subagents). It runs as a Claude Code plugin, and there is an optional desktop app too.
 
 ## Quick start
 
-You need Node and npm. The project is developed on Node 26 and Electron 45.
+1. Install the plugin. Type these inside Claude Code:
+
+   ```
+   /plugin marketplace add <path-or-github>
+   /plugin install agent-office
+   ```
+
+2. Type `/office`.
+
+A panel opens beside the chat. You need Node 20 or newer on your PATH.
+
+## What the panel shows
+
+- One room per Claude Code session, with a pixel person for each agent.
+- Name chips under the rooms. Press a chip to open that agent's details (tokens, estimated cost, tools, recent activity). Press close to go back.
+- "+N more" when there are more chips than fit.
+- `/office` also prints the full office link. Open it in a browser to see the animated office.
+- On the desktop app or VS Code, the panel is a text list of rooms and agents with their status, plus the chips.
+
+Type `/office stop` to stop the tracker.
+
+## The tracker
+
+`/office` starts a small background tracker if none is running. It needs Node 20+. It exits on its own after 30 minutes with no busy session. Its log is `~/.agent-office/tracker.log`. If the desktop app is already running, `/office` uses it and leaves it alone.
+
+Without a tracker, the panel says to run `/office` once in terminal Claude, or open the Agent Office app.
+
+The plugin also forwards hook events (`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `Stop`, `Notification`, `SubagentStart`, `SubagentStop`, `PreToolUse`, `PostToolUse`) with `plugin/scripts/forward.sh`. The hooks are `async: true` and the script uses `curl --max-time 1`. With nothing listening, a hook run took about 14 ms, exited 0 and printed nothing, so Claude Code is unaffected. Without hooks, sessions are still found by rescanning `~/.claude/sessions/*.json` (or `$CLAUDE_CONFIG_DIR`) every 3 seconds.
+
+## Desktop app (optional)
+
+The desktop app is a floating window with the same office. You need Node and npm. The project is developed on Node 26 and Electron 45.
 
 ```sh
 npm install
@@ -17,27 +48,7 @@ npm start
 
 A second `npm start` does not open another copy. It brings the existing window forward.
 
-Start a Claude Code session and a room appears. The app finds sessions on its own (see below), so the plugin is optional.
-
-## The plugin
-
-The plugin is optional but recommended.
-
-- **Without it**, the app still finds every running session and subagent. It rescans Claude Code's session registry (`~/.claude/sessions/*.json`, or `$CLAUDE_CONFIG_DIR`) every 3 seconds.
-- **With it**, events arrive instantly through Claude Code hooks, and permission prompts show the "needs you" pose.
-
-Install it by typing these inside Claude Code:
-
-```
-/plugin marketplace add <path-to-repo>
-/plugin install agent-office
-```
-
-Then restart your sessions so the hooks load.
-
-The plugin only forwards hook events (`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `Stop`, `Notification`, `SubagentStart`, `SubagentStop`, `PreToolUse`, `PostToolUse`) to the app with `plugin/scripts/forward.sh`. The hooks are `async: true` and the script uses `curl --max-time 1`. With the app quit, a hook run took about 14 ms, exited 0 and printed nothing, so Claude Code is unaffected.
-
-## Using the window
+### Using the window
 
 - Click a character to open a panel with tokens, estimated cost, context window, tools, files and recent activity.
 - Click a room to zoom into it.
@@ -52,7 +63,7 @@ To see the office without real sessions, start the app and run:
 npm run demo -- --sessions 3
 ```
 
-It replays recorded hook events as fake sessions until you press Ctrl-C. Other flags are `--speed <n>` (for example `--speed 2`), and `--port` and `--token` if you are not using the default config.
+It replays recorded hook events as fake sessions until you press Ctrl-C. Other flags are `--speed <n>` (for example `--speed 2`), and `--port` and `--token` to override the config. It reads the config from `AGENT_OFFICE_DIR` (or `~/.agent-office`). Point it only at a tracker or app you started for this.
 
 ## Configuration
 
@@ -63,12 +74,13 @@ Everything lives in `~/.agent-office/` (override the folder with the `AGENT_OFFI
 
 ## Privacy
 
-Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only. The hook event endpoint and the live connection the office window uses both require the token from `config.json` (the plugin sends it in a header, never on the command line); the office page's static files are served without it. The `.key` files in the session registry are never read.
+Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only. The hook event endpoint, the `/state` endpoint and the live connection the office window uses all require the token from `config.json` (the plugin sends it in a header, never on the command line); the office page's static files are served without it. The `/office` link contains the token, so treat it like a password. The model sees it as `token=<hidden>`, but the transcript row still holds the link. The `.key` files in the session registry are never read.
 
 ## Known limits
 
 - The panel details and session discovery rely on Claude Code's internal, undocumented files (the logs under `projects/` and the session registry). A Claude Code update could change them. Hooks keep working, but some details might go blank.
-- Cost is an estimate.
+- Cost is an estimate, not a bill.
+- The tracker needs Node 20+. Without it, `/office` cannot start one.
 - A signed, notarized app with auto-update is planned. For now you run it from source.
 
 ## Development

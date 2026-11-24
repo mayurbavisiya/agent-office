@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadOrCreateConfig } from '../src/shared/config.js';
@@ -84,6 +85,12 @@ export async function runDemo(opts: DemoOptions): Promise<void> {
   await Promise.all(Array.from({ length: n }, (_, i) => runSession(i)));
 }
 
+/** Port and token for a demo run: `--port`/`--token` win, else the config in AGENT_OFFICE_DIR (or ~/.agent-office), like the app. */
+export function resolveDemoConfig(argv: string[], env: NodeJS.ProcessEnv = process.env): { port: number; token: string } {
+  const cfg = loadOrCreateConfig(env.AGENT_OFFICE_DIR || join(homedir(), '.agent-office'));
+  return { port: Number(flag(argv, 'port') ?? cfg.port), token: flag(argv, 'token') ?? cfg.token };
+}
+
 function flag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
   return i >= 0 ? argv[i + 1] : undefined;
@@ -91,9 +98,7 @@ function flag(argv: string[], name: string): string | undefined {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const argv = process.argv.slice(2);
-  const cfg = loadOrCreateConfig();
-  const port = Number(flag(argv, 'port') ?? cfg.port);
-  const token = flag(argv, 'token') ?? cfg.token;
+  const { port, token } = resolveDemoConfig(argv);
   const sessions = Number(flag(argv, 'sessions') ?? 3);
   const speed = Number(flag(argv, 'speed') ?? 1);
   const ac = new AbortController();

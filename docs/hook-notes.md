@@ -167,3 +167,5 @@ every field as optional and tolerate garbage.
   stdio to /dev/null before `&`.
 - `/office` replies with `isTextDisplayOnly` and a token-free `context`: the person sees the link
   with its token, the model reads it as `token=<hidden>`. The transcript row still holds the link.
+- `isTextDisplayOnly` is ignored when `/office` is queued mid-turn, so the model may then see the link
+  (with its token) in that turn.

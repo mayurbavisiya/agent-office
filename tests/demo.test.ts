@@ -43,3 +43,14 @@ describe('demo mode', () => {
     }
   });
 });
+
+describe('demo config', () => {
+  it('resolves port and token from AGENT_OFFICE_DIR, with flags as overrides', async () => {
+    const { resolveDemoConfig } = await import('../tools/demo.js');
+    const dir = mkdtempSync(join(tmpdir(), 'ao-demo-'));
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ port: 51234, token: 'tok' }));
+    expect(resolveDemoConfig([], { AGENT_OFFICE_DIR: dir })).toEqual({ port: 51234, token: 'tok' });
+    expect(resolveDemoConfig(['--port', '9', '--token', 'x'], { AGENT_OFFICE_DIR: dir })).toEqual({ port: 9, token: 'x' });
+  });
+});
