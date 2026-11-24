@@ -9,11 +9,15 @@
 // - g.char is positioned at its seat by rooms.ts (transform attribute, mirrored in data-x/data-y).
 // - Its child g.anim is owned by this runner: walks are CSS transform offsets relative to the
 //   seat, so snapshot updates that re-place g.char never clobber a walk in progress.
+// - Limbs are driven by state classes on g.char (walking, sitting, carrying, giving, cheer; see
+//   styles.css): each step applies stepClasses(kind) through characters.setStepClasses, so they
+//   survive snapshot re-renders until the step sequence ends and hands the classes back to the
+//   status pose. g.dir is flipped (scale(±1,1)) to face the way the character walks.
 // - A character mid handoff/exit carries data-departing; rooms.ts keeps it rendered after its
 //   agent goes 'gone' (and loses its seat) until exit_door finishes and removes it here.
 import type { OfficeEvent, OfficeState } from '../shared/types.js';
 import { HEAD_TOP, TAG_H, handoffTarget, type Point, type RoomLayout } from './layout.js';
-import { setAnimPose, svgEl } from './characters.js';
+import { STATE_CLASSES, setCheer, setStepClasses, stepClassesOf, svgEl } from './characters.js';
 import { layoutOf } from './rooms.js';
 
 export type AnimKind =
@@ -58,6 +62,32 @@ export const DURATIONS: Record<AnimKind, number> = {
 
 /** Walks become a fade of this length under prefers-reduced-motion. */
 const REDUCED_MS = 300;
+
+/** State classes a step adds to / removes from the walker when it starts (see the brief's table). */
+export function stepClasses(kind: AnimKind): { add: string[]; remove: string[] } {
+  switch (kind) {
+    case 'enter_door':
+    case 'walk_to_desk':
+    case 'shift_change':
+      return { add: ['walking'], remove: ['sitting'] };
+    case 'walk_to':
+      return { add: ['walking', 'carrying'], remove: ['sitting'] };
+    case 'give':
+      return { add: ['giving'], remove: ['walking', 'carrying'] };
+    case 'exit_door':
+      return { add: ['walking'], remove: ['giving', 'carrying', 'sitting'] };
+    default:
+      // celebrate: nothing on the walker (the receiver cheers); room fades have no walker
+      return { add: [], remove: [] };
+  }
+}
+
+/** Which way to face (1 right, -1 left) when moving from fromX to toX; tiny moves keep `current`. */
+export function facing(fromX: number, toX: number, current: 1 | -1): 1 | -1 {
+  const dx = toX - fromX;
+  if (Math.abs(dx) < 1) return current;
+  return dx > 0 ? 1 : -1;
+}
 
 /** Turns store events into animation steps. Steps for sessions not in state are dropped. */
 export function planAnimations(events: OfficeEvent[], state: OfficeState): AnimStep[] {
@@ -157,6 +187,11 @@ function cancelQueue(svg: SVGSVGElement, sessionId: string, agentId: string): vo
   q.items = [];
   for (const a of q.running) cancelAnimation(a);
   q.running.clear();
+  if (agentId !== ROOM_ACTOR) {
+    const room = roomEl(svg, sessionId);
+    const c = room && charEl(room, agentId);
+    if (c) restoreSeated(c);
+  }
 }
 
 const cancelledAnims = new WeakSet<Animation>();
@@ -231,6 +266,95 @@ const animate = tween;
 function flourish(el: SVGElement, kf: Keyframe[], ms: number, opts: KeyframeAnimationOptions = {}, remove: Element = el): void {
   const a = el.animate(kf, { duration: ms, fill: 'forwards', ...opts });
   void done(a, ms).then(() => remove.remove());
+}
+
+// ------------------------------------------------------------------ walking and sitting
+
+/** Standing up from / sitting down on the chair eases over this long (see .settling in styles.css). */
+const SETTLE_MS = 450;
+/** A seated character stands up for this long before it starts walking. */
+const STAND_MS = 350;
+
+const settleTimers = new WeakMap<Element, ReturnType<typeof setTimeout>>();
+/** Holds the walk/breathe cycles for SETTLE_MS so the rig's transforms transition (sit/stand). */
+function settle(c: SVGGElement): void {
+  c.classList.add('settling');
+  const t = settleTimers.get(c);
+  if (t !== undefined) clearTimeout(t);
+  settleTimers.set(c, setTimeout(() => c.classList.remove('settling'), SETTLE_MS));
+}
+
+function dirOf(c: SVGGElement): SVGGElement | null {
+  return c.querySelector<SVGGElement>(':scope > .anim > .dir');
+}
+function currentFacing(c: SVGGElement): 1 | -1 {
+  return c.dataset.face === '-1' ? -1 : 1;
+}
+/** Flips g.dir to face f (1: right, the rig's natural and seated direction). */
+function face(c: SVGGElement, f: 1 | -1): void {
+  c.dataset.face = String(f);
+  const dir = dirOf(c);
+  if (dir) dir.style.transform = `scale(${f},1)`;
+}
+
+/** The walker's state classes now: its running step's, or (between steps) the ones on the element. */
+function currentStep(c: SVGGElement): string[] {
+  return stepClassesOf(c) ?? STATE_CLASSES.filter((k) => k !== 'cheer' && c.classList.contains(k));
+}
+/** Applies a step's add/remove delta on top of the walker's current state classes. */
+function applyDelta(c: SVGGElement, add: string[], remove: string[]): void {
+  const cur = new Set(currentStep(c));
+  for (const k of remove) cur.delete(k);
+  for (const k of add) cur.add(k);
+  setStepClasses(c, [...cur]);
+}
+
+/** Back to the seated status pose at the seat, facing the desk (a cancelled queue, a kept exit). */
+function restoreSeated(c: SVGGElement): void {
+  const anim = c.querySelector<SVGGElement>(':scope > .anim');
+  if (anim) setOffset(anim, { x: 0, y: 0 }, 1);
+  delete c.dataset.departing;
+  face(c, 1);
+  setStepClasses(c, null);
+}
+
+/**
+ * One walking step of a character: applies stepClasses(kind), faces the way it travels, and moves
+ * g.anim from `from` to `to` (offsets from the seat) over ms, or plays `kf` instead when given.
+ * A seated walker first stands up (walk_to / exit_door). On finish, or on the stalled-timeline
+ * commit, walk_to_desk / shift_change sit down: the status pose takes the classes back (sitting,
+ * no walking) and it faces the desk. A cancelled walk restores the seated state.
+ * Resolves false when cancelled.
+ */
+export async function walkStep(ctx: Ctx, c: SVGGElement, kind: AnimKind, from: Point, to: Point, ms: number, kf?: Keyframe[]): Promise<boolean> {
+  const anim = c.querySelector<SVGGElement>(':scope > .anim');
+  if (!anim) return false;
+  const { add, remove } = stepClasses(kind);
+  const standUp = !ctx.reduced && (kind === 'walk_to' || kind === 'exit_door') && currentStep(c).includes('sitting');
+  if (standUp) {
+    // stand beside the chair first (the rig eases up), then set off
+    applyDelta(c, add.filter((k) => k !== 'walking'), remove);
+    settle(c);
+    await wait(STAND_MS);
+    // cancelled while standing up (cancelQueue restored the seated state)
+    if (stepClassesOf(c) === null) return false;
+    ms = Math.max(REDUCED_MS, ms - STAND_MS);
+  }
+  applyDelta(c, add, remove);
+  if (!ctx.reduced) face(c, facing(from.x, to.x, currentFacing(c)));
+  const ok = await tween(ctx, anim, kf ?? [{ transform: tr(from), opacity: 1 }, { transform: tr(to), opacity: 1 }], ms);
+  if (!ok) {
+    restoreSeated(c);
+    return false;
+  }
+  offsets.set(anim, to);
+  if (kind === 'walk_to_desk' || kind === 'shift_change') {
+    if (!ctx.reduced) settle(c);
+    applyDelta(c, ['sitting'], ['walking']);
+    face(c, 1);
+    setStepClasses(c, null);
+  }
+  return true;
 }
 
 // per character: current animation offset from its seat
@@ -346,70 +470,56 @@ async function play(step: AnimStep, svg: SVGSVGElement, q: Queue): Promise<boole
       const at = { x: layout.door.x - base.x, y: layout.door.y - base.y };
       doorTag(ctx, room, layout, 'New agent spawned!', '#ec4899', ms * 2, true);
       if (ctx.reduced) {
+        const e = stepClasses('enter_door');
+        applyDelta(c, e.add, e.remove);
         setOffset(anim, { x: 0, y: 0 }, 0);
         return true;
       }
-      setOffset(anim, at, 0);
-      setAnimPose(c, 'wave');
+      // step out of the doorway, fading in, already facing the seat
+      const behind = { x: at.x, y: at.y - 6 };
+      setOffset(anim, behind, 0);
       openDoor(ctx, room, ms + 600);
-      await animate(ctx, anim, [{ transform: tr(at), opacity: 0 }, { transform: tr(at), opacity: 0, offset: 0.3 }, { transform: tr(at), opacity: 1 }], ms);
-      return true;
+      face(c, facing(layout.door.x, base.x, currentFacing(c)));
+      return walkStep(ctx, c, 'enter_door', behind, at, ms, [
+        { transform: tr(behind), opacity: 0 },
+        { transform: tr(behind), opacity: 0, offset: 0.3 },
+        { transform: tr(at), opacity: 1 },
+      ]);
     }
     case 'walk_to_desk': {
       if (ctx.reduced) {
         setOffset(anim, { x: 0, y: 0 });
-        await animate(ctx, anim, [{ opacity: 0 }, { opacity: 1 }], walkMs);
-      } else {
-        setAnimPose(c, 'walk');
-        await animate(ctx, anim, [{ transform: tr(off), opacity: 1 }, { transform: tr({ x: 0, y: 0 }), opacity: 1 }], walkMs);
-        offsets.set(anim, { x: 0, y: 0 });
+        return walkStep(ctx, c, 'walk_to_desk', off, { x: 0, y: 0 }, walkMs, [{ opacity: 0 }, { opacity: 1 }]);
       }
-      setAnimPose(c, null);
-      return true;
+      return walkStep(ctx, c, 'walk_to_desk', off, { x: 0, y: 0 }, walkMs);
     }
     case 'walk_to': {
       c.dataset.departing = '1';
-      setAnimPose(c, 'carry');
-      if (ctx.reduced) return true;
       const t = handoffTarget(layout, { parentId: step.targetId && step.targetId !== 'boss' ? step.targetId : null });
       const to = { x: t.x - base.x, y: t.y - base.y };
-      await animate(ctx, anim, [{ transform: tr(off), opacity: 1 }, { transform: tr(to), opacity: 1 }], walkMs);
-      offsets.set(anim, to);
-      return true;
+      if (ctx.reduced) {
+        // no walk: a fade to the receiver
+        setOffset(anim, to, 0);
+        return walkStep(ctx, c, 'walk_to', to, to, REDUCED_MS, [{ opacity: 0 }, { opacity: 1 }]);
+      }
+      return walkStep(ctx, c, 'walk_to', off, to, walkMs);
     }
     case 'give': {
-      setAnimPose(c, 'stand');
+      // raise the paper (the rig's own, in the hand) towards the receiver
+      const g = stepClasses('give');
+      applyDelta(c, g.add, g.remove);
       const target = receiver(room, layout, step.targetId);
-      const s = layout.scale;
-      const from = { x: base.x + off.x - 36 * s, y: base.y + off.y - 20 * s };
-      if (target && !ctx.reduced) {
-        const paper = svgEl('g', { transform: `translate(${Math.round(from.x)},${Math.round(from.y)})` }, fxLayer(room));
-        paper.insertAdjacentHTML('beforeend', '<rect x="-8" y="-10" width="16" height="20" rx="2" fill="#fff" stroke="#999"/><path d="M-5 -5h10M-5 -1h10M-5 3h7" stroke="#bbb"/>');
-        const dx = target.x - from.x;
-        const dy = target.y - 26 * target.scale - from.y;
-        const a = paper.animate(
-          [
-            { transform: 'translate(0px, 0px) rotate(0deg)', opacity: 1 },
-            { transform: `translate(${dx * 0.5}px, ${dy * 0.5 - 18}px) rotate(-20deg)`, opacity: 1, offset: 0.5 },
-            { transform: `translate(${dx}px, ${dy}px) rotate(-8deg)`, opacity: 1, offset: 0.85 },
-            { transform: `translate(${dx}px, ${dy}px) rotate(-8deg)`, opacity: 0 },
-          ],
-          { duration: ms, easing: 'ease-in-out', fill: 'forwards' },
-        );
-        q.running.add(a);
-        await done(a, ms);
-        q.running.delete(a);
-        paper.remove();
-      } else await wait(ctx.reduced ? REDUCED_MS : ms);
+      if (target && !ctx.reduced) face(c, facing(base.x + off.x, target.x, currentFacing(c)));
+      await wait(ctx.reduced ? REDUCED_MS : ms);
       return true;
     }
     case 'celebrate': {
-      setAnimPose(c, 'wave');
       const target = receiver(room, layout, step.targetId);
       if (!target) {
         await wait(ms);
         return true;
       }
+      if (target.el) setCheer(target.el, true);
       const fx = fxLayer(room);
       const bubble = pill(fx, { x: target.x, y: Math.max(16, target.y - HEAD_TOP * target.scale - TAG_H - 10) }, layout.rect.w, '✓ Got it, thanks!', '#16a34a', 11);
       bubble.style.transformBox = 'fill-box';
@@ -433,28 +543,29 @@ async function play(step: AnimStep, svg: SVGSVGElement, q: Queue): Promise<boole
           ];
       const a = bubble.animate(kf, { duration: ms, fill: 'forwards' });
       q.running.add(a);
-      await done(a, ms);
-      q.running.delete(a);
-      bubble.parentElement?.remove();
+      try {
+        await done(a, ms);
+      } finally {
+        q.running.delete(a);
+        bubble.parentElement?.remove();
+        if (target.el) setCheer(target.el, false);
+      }
       return true;
     }
     case 'exit_door': {
       c.dataset.departing = '1';
+      const to = { x: layout.door.x - base.x, y: layout.door.y - base.y };
+      let ok: boolean;
       if (ctx.reduced) {
-        await animate(ctx, anim, [{ opacity: 1 }, { opacity: 0 }], REDUCED_MS);
+        ok = await walkStep(ctx, c, 'exit_door', off, off, REDUCED_MS, [{ opacity: 1 }, { opacity: 0 }]);
       } else {
-        setAnimPose(c, 'walk');
-        const to = { x: layout.door.x - base.x, y: layout.door.y - base.y };
         openDoor(ctx, room, ms);
-        await animate(ctx, anim, [{ transform: tr(off), opacity: 1 }, { transform: tr(to), opacity: 1, offset: 0.8 }, { transform: tr(to), opacity: 0 }], ms);
+        ok = await walkStep(ctx, c, 'exit_door', off, to, ms, [{ transform: tr(off), opacity: 1 }, { transform: tr(to), opacity: 1, offset: 0.8 }, { transform: tr(to), opacity: 0 }]);
       }
+      if (!ok) return true;
       // gone: remove it now (rooms.ts kept it alive for this); a seated agent is restored instead
       if (!layoutOf(room)?.seats[step.agentId]) c.remove();
-      else {
-        delete c.dataset.departing;
-        setOffset(anim, { x: 0, y: 0 }, 1);
-        setAnimPose(c, null);
-      }
+      else restoreSeated(c);
       return true;
     }
     case 'shift_change': {
@@ -462,16 +573,11 @@ async function play(step: AnimStep, svg: SVGSVGElement, q: Queue): Promise<boole
       doorTag(ctx, room, layout, 'Shift change!', '#8b5cf6', ms * 1.4, false);
       if (ctx.reduced) {
         setOffset(anim, { x: 0, y: 0 });
-        await animate(ctx, anim, [{ opacity: 0 }, { opacity: 1 }], REDUCED_MS);
-        return true;
+        return walkStep(ctx, c, 'shift_change', at, { x: 0, y: 0 }, REDUCED_MS, [{ opacity: 0 }, { opacity: 1 }]);
       }
-      setAnimPose(c, 'walk');
       openDoor(ctx, room, ms * 0.6);
       setOffset(anim, at, 0);
-      await animate(ctx, anim, [{ transform: tr(at), opacity: 0 }, { transform: tr(at), opacity: 1, offset: 0.2 }, { transform: 'translate(0px, 0px)', opacity: 1 }], ms);
-      offsets.set(anim, { x: 0, y: 0 });
-      setAnimPose(c, null);
-      return true;
+      return walkStep(ctx, c, 'shift_change', at, { x: 0, y: 0 }, ms, [{ transform: tr(at), opacity: 0 }, { transform: tr(at), opacity: 1, offset: 0.2 }, { transform: 'translate(0px, 0px)', opacity: 1 }]);
     }
   }
   return false;
@@ -482,10 +588,10 @@ function wait(ms: number): Promise<void> {
 }
 
 /** Position (room-local feet), scale and wrapper of whoever receives a handoff. */
-function receiver(room: SVGGElement, layout: RoomLayout, targetId: string | undefined): (Point & { scale: number; anim: SVGGElement | null }) | undefined {
+function receiver(room: SVGGElement, layout: RoomLayout, targetId: string | undefined): (Point & { scale: number; el: SVGGElement | null; anim: SVGGElement | null }) | undefined {
   const id = targetId && targetId !== 'boss' && layout.seats[targetId] ? targetId : 'boss';
   const p = id === 'boss' ? layout.boss : layout.seats[id];
   if (!p) return undefined;
   const el = charEl(room, id);
-  return { x: p.x, y: p.y, scale: id === 'boss' ? layout.bossScale : layout.scale, anim: el?.querySelector<SVGGElement>(':scope > .anim') ?? null };
+  return { x: p.x, y: p.y, scale: id === 'boss' ? layout.bossScale : layout.scale, el, anim: el?.querySelector<SVGGElement>(':scope > .anim') ?? null };
 }

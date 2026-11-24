@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { layoutRooms, roomLayout, handoffTarget, assignSeats, visibleSessions, signText, roomTitle, MIN_ROOM_W, MIN_ROOM_H } from '../src/scene/layout.js';
+import { layoutRooms, roomLayout, handoffTarget, assignSeats, visibleSessions, signText, roomTitle, MIN_ROOM_W, MIN_ROOM_H, DESK_BOTTOM, HEAD_TOP, TAG_H, SIGN_H } from '../src/scene/layout.js';
 import type { Agent, Session } from '../src/shared/types.js';
 
 const stats = () => ({ inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, tools: {}, files: [], recent: [], lastActivity: 0 });
@@ -112,6 +112,25 @@ describe('roomLayout', () => {
     expect(Object.keys(many.seats)).toHaveLength(8);
   });
 
+  it('figures grow in a roomy room', () => {
+    const roomy = roomLayout(session([agent('a', null, 1)]), { x: 0, y: 0, w: 1400, h: 900 });
+    expect(roomy.scale).toBeGreaterThan(1);
+    expect(roomy.scale).toBeLessThanOrEqual(1.6);
+    expect(roomy.bossScale).toBeGreaterThan(1);
+    // the roomy figure still fits: name tag below the sign, desk inside the room
+    const seat = roomy.seats.a;
+    expect(seat.y - HEAD_TOP * roomy.scale - TAG_H).toBeGreaterThan(SIGN_H);
+    expect(seat.x + 84 * roomy.scale).toBeLessThanOrEqual(1400);
+    expect(roomy.boss.y - HEAD_TOP * roomy.bossScale - TAG_H).toBeGreaterThan(SIGN_H);
+    // a crowded room is unchanged (or smaller)
+    const crowded = roomLayout(session(Array.from({ length: 25 }, (_, i) => agent(`a${i}`, null, i))), { x: 0, y: 0, w: 320, h: 220 });
+    expect(crowded.scale).toBeLessThanOrEqual(0.4);
+    // two rows in a roomy room never overlap: row pitch covers a figure plus its tag
+    const many = roomLayout(session(Array.from({ length: 12 }, (_, i) => agent(`m${i}`, null, i))), { x: 0, y: 0, w: 1400, h: 900 });
+    const ys = [...new Set(Object.values(many.seats).map((p) => p.y))].sort((a, b) => a - b);
+    for (let i = 1; i < ys.length; i++) expect(ys[i] - ys[i - 1]).toBeGreaterThanOrEqual(HEAD_TOP * many.scale + TAG_H);
+  });
+
   it('keeps a crowded room (25 agents in 320x220) inside the room with distinct seats', () => {
     const r = { x: 0, y: 0, w: 320, h: 220 };
     const l = roomLayout(session(Array.from({ length: 25 }, (_, i) => agent(`a${i}`, null, i))), r);
@@ -120,7 +139,7 @@ describe('roomLayout', () => {
     for (const p of pts) {
       expect(p.x).toBeGreaterThan(l.bossW);
       expect(p.x + 84 * l.scale).toBeLessThanOrEqual(r.w);
-      expect(p.y + 36 * l.scale).toBeLessThanOrEqual(r.h);
+      expect(p.y + DESK_BOTTOM * l.scale).toBeLessThanOrEqual(r.h);
       expect(p.y).toBeGreaterThan(l.wallH);
     }
     expect(new Set(pts.map((p) => `${p.x},${p.y}`)).size).toBe(25);

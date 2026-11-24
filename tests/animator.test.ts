@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { planAnimations, DURATIONS, tween, cancelAnimation } from '../src/scene/animator.js';
+import { planAnimations, DURATIONS, tween, cancelAnimation, stepClasses, facing, walkStep } from '../src/scene/animator.js';
 import type { Agent, OfficeState, Session } from '../src/shared/types.js';
 
 const stats = () => ({ inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, tools: {}, files: [], recent: [], lastActivity: 0 });
@@ -137,5 +137,61 @@ describe('tween (Web Animations runner)', () => {
     await vi.advanceTimersByTimeAsync(1700);
     await expect(p).resolves.toBe(false);
     expect(el.style.opacity).toBe('1');
+  });
+});
+
+describe('walk choreography', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('stepClasses maps each walk kind', () => {
+    expect(stepClasses('enter_door')).toEqual({ add: ['walking'], remove: ['sitting'] });
+    expect(stepClasses('walk_to_desk')).toEqual({ add: ['walking'], remove: ['sitting'] });
+    expect(stepClasses('walk_to')).toEqual({ add: ['walking', 'carrying'], remove: ['sitting'] });
+    expect(stepClasses('give')).toEqual({ add: ['giving'], remove: ['walking', 'carrying'] });
+    expect(stepClasses('exit_door')).toEqual({ add: ['walking'], remove: ['giving', 'carrying', 'sitting'] });
+    expect(stepClasses('celebrate')).toEqual({ add: [], remove: [] });
+  });
+
+  it('facing turns toward travel', () => {
+    expect(facing(10, 50, -1)).toBe(1);
+    expect(facing(50, 10, 1)).toBe(-1);
+    expect(facing(10, 10.5, -1)).toBe(-1);
+  });
+
+  /** A g.char stub: real class bookkeeping, a g.dir, and a g.anim whose animations never finish. */
+  function stalledChar() {
+    const anim = { finished: new Promise<never>(() => {}), playState: 'running', cancel: vi.fn() };
+    const animEl = { animate: vi.fn(() => anim), style: {} as Record<string, string> };
+    const dir = { style: {} as Record<string, string> };
+    const cls = new Set(['sitting', 'pose-type']);
+    const c = {
+      dataset: {} as Record<string, string>,
+      style: {} as Record<string, string>,
+      classList: {
+        add: (...n: string[]) => n.forEach((x) => cls.add(x)),
+        remove: (...n: string[]) => n.forEach((x) => cls.delete(x)),
+        contains: (n: string) => cls.has(n),
+        toggle: (n: string, on?: boolean) => ((on ?? !cls.has(n)) ? cls.add(n) : cls.delete(n), cls.has(n)),
+      },
+      querySelector: (sel: string) => (sel.includes('.dir') ? dir : animEl),
+    };
+    return { c, cls, dir, animEl };
+  }
+
+  it('final classes are committed on a stalled timeline', async () => {
+    vi.useFakeTimers();
+    const { c, cls, dir } = stalledChar();
+    const running = new Set<Animation>();
+    const p = walkStep({ q: { running }, reduced: false }, c as unknown as SVGGElement, 'walk_to_desk', { x: 200, y: -40 }, { x: 0, y: 0 }, 2000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cls.has('walking')).toBe(true);
+    expect(cls.has('sitting')).toBe(false);
+    expect(dir.style.transform).toBe('scale(-1,1)');
+    await vi.advanceTimersByTimeAsync(3100);
+    await expect(p).resolves.toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(cls.has('sitting')).toBe(true);
+    expect(cls.has('walking')).toBe(false);
+    expect(running.size).toBe(0);
   });
 });

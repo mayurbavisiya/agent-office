@@ -134,7 +134,7 @@ function renderStrip(state: OfficeState): void {
     // outside it) clips the upright rig just above the hands and hips
     svgEl.setAttribute('viewBox', '-14.1 -62 28.2 36');
     svgEl.appendChild(
-      renderCharacter({ id: 'boss', sessionId: s.id, color: looksFor('main').color, human: humanLook(s.id, 'boss'), mood: look.mood, pose: poseClass(look, true), name: roomTitle(s), tokens: '', bust: true }),
+      renderCharacter({ id: 'boss', sessionId: s.id, color: looksFor('main').color, human: humanLook(s.id, 'boss'), mood: look.mood, pose: poseClass(look, true), fx: look.fx, name: roomTitle(s), tokens: '', bust: true }),
     );
     const text = document.createElement('div');
     const name = document.createElement('div');

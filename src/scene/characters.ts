@@ -183,6 +183,25 @@ function fxMarkup(fx: Fx, s: number): string {
 }
 
 /**
+ * Status bubble for the compact-strip bust, shrunk into the space behind the head so it stays inside
+ * the bust's viewBox (x -14.1..14.1, y -62..-26 in body units).
+ */
+function bustFxMarkup(fx: Fx): string {
+  const bubble = (stroke: string, color: string, ch: string) =>
+    `<g transform="translate(-8,-53.6) scale(.6)"><g class="bubbleq"><circle r="9" fill="#fff" stroke="${stroke}" stroke-width="2"/><text y="4.5" font-size="13" font-weight="900" fill="${color}" text-anchor="middle">${ch}</text></g></g>`;
+  switch (fx) {
+    case 'alert':
+      return bubble('#f59e0b', '#d97706', '!');
+    case 'stuck':
+      return bubble('#dc2626', '#dc2626', '?');
+    case 'tap':
+      return bubble('#94a3b8', '#475569', '…');
+    default:
+      return '';
+  }
+}
+
+/**
  * Builds a character group; see updateCharacter for the attributes it carries.
  * Structure: g.char (positioned by its caller via the transform attribute; carries the state and
  * pose classes and --L) > g.anim (owned by the animator: Web Animations offsets/opacity only) >
@@ -221,6 +240,53 @@ export function setAnimPose(g: SVGGElement, pose: Pose | null): void {
 }
 
 /**
+ * Animator-owned state classes for a running step (e.g. ['walking', 'carrying'], or [] while just
+ * standing); null hands the classes back to the status pose (seated). Kept in data-step, so they
+ * survive snapshot updates until the animator clears them. Applied at once.
+ */
+export function setStepClasses(g: SVGGElement, classes: string[] | null): void {
+  if (classes) g.dataset.step = classes.join(' ');
+  else delete g.dataset.step;
+  applyClasses(g);
+}
+
+/** The receiver of a handoff waves ('cheer') on top of whatever it is doing; survives snapshots. */
+export function setCheer(g: SVGGElement, on: boolean): void {
+  if (on) g.dataset.cheer = '1';
+  else delete g.dataset.cheer;
+  applyClasses(g);
+}
+
+/** Current animator step classes (data-step), or null when the status pose rules. */
+export function stepClassesOf(g: SVGGElement): string[] | null {
+  const s = g.dataset.step;
+  return s === undefined ? null : s.split(' ').filter(Boolean);
+}
+
+/**
+ * Sets g.char's state and pose classes from data-pose (the status pose), data-step (a running
+ * animator step), data-cheer and data-animPose; only touches the class list when the set changes.
+ * Pose classes stay on during a step: CSS ignores them while walking.
+ */
+function applyClasses(g: SVGGElement): void {
+  const pose = g.dataset.pose as PoseClass | undefined;
+  let classes: string[];
+  if (g.dataset.bust) classes = ['bust', ...(pose ? [pose] : [])];
+  else {
+    const step = stepClassesOf(g);
+    if (step) classes = pose ? [...step, pose] : step;
+    else classes = stateClasses(pose ?? 'pose-idle', (g.dataset.animPose as Pose | undefined) ?? null).filter((c) => pose || !c.startsWith('pose-'));
+    if (g.dataset.cheer && !classes.includes('cheer')) classes = [...classes, 'cheer'];
+  }
+  const classSig = classes.join(' ');
+  if (g.dataset.state !== classSig) {
+    g.dataset.state = classSig;
+    g.classList.remove(...STATE_CLASSES, ...POSE_CLASSES, 'bust');
+    if (classes.length) g.classList.add(...classes);
+  }
+}
+
+/**
  * Updates a character in place. The rig (and its CSS animations) is only rebuilt when the look,
  * mood or scale change; state/pose classes only when they change (so classes toggled by an animator
  * survive snapshots that leave the pose alone); overlays only when the status overlay changes.
@@ -236,13 +302,8 @@ export function updateCharacter(g: SVGGElement, o: CharacterOpts): void {
   g.dataset.mood = o.mood;
   g.style.setProperty('--L', `${r1(HALF_LEG * s)}px`);
 
-  const classes = o.bust ? ['bust', o.pose] : stateClasses(o.pose, (g.dataset.animPose as Pose | undefined) ?? null);
-  const classSig = classes.join(' ');
-  if (g.dataset.state !== classSig) {
-    g.dataset.state = classSig;
-    g.classList.remove(...STATE_CLASSES, ...POSE_CLASSES, 'bust');
-    g.classList.add(...classes);
-  }
+  if (o.bust) g.dataset.bust = '1';
+  applyClasses(g);
 
   const dir = g.querySelector<SVGGElement>(':scope > .anim > .dir')!;
   const h = o.human;
@@ -254,11 +315,11 @@ export function updateCharacter(g: SVGGElement, o: CharacterOpts): void {
   }
 
   const fxg = g.querySelector<SVGGElement>(':scope > .anim > .fx')!;
-  const fxSig = `${fx}|${s}`;
+  const fxSig = `${fx}|${s}|${o.bust ? 'bust' : ''}`;
   if (fxg.dataset.sig !== fxSig) {
     fxg.dataset.sig = fxSig;
     fxg.replaceChildren();
-    html(fxg, fxMarkup(fx, s));
+    html(fxg, o.bust ? bustFxMarkup(fx) : fxMarkup(fx, s));
   }
   const timer = fxg.querySelector<SVGTextElement>('.timer');
   if (timer) {

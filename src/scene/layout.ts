@@ -94,8 +94,11 @@ export const SIGN_H = 22;
 export const TAG_H = 36;
 /** head top in body units (crown/hat included), feet at 0 */
 export const HEAD_TOP = 58;
-/** desk legs bottom in body units, below the feet line */
-export const DESK_BOTTOM = 36;
+/** lowest furniture point in body units below the feet line (desk legs and chair base end at the feet; wheels and shoes peek a little lower) */
+export const DESK_BOTTOM = 4;
+/** body scale limits: crowded rooms shrink figures to MIN_SCALE, roomy ones grow them up to MAX_SCALE */
+export const MIN_SCALE = 0.4;
+export const MAX_SCALE = 1.6;
 /** a workstation (figure + desk) spans [-21, 84] body units horizontally */
 const WS_LEFT = 21;
 const WS_RIGHT = 84;
@@ -202,8 +205,16 @@ export function visibleSessions<S extends Pick<Session, 'id' | 'status'>>(sessio
 export function roomLayout(session: Session, rect: Rect, prevSlots?: Record<string, number>): RoomLayout {
   const { w, h } = rect;
   const wallH = Math.round(h * 0.34);
-  const bossW = clamp(Math.round(w * 0.28), 96, 190);
-  const bossScale = clamp(bossW / 170, 0.5, 1);
+  // big rooms get bigger figures (up to MAX_SCALE); crowded rooms shrink them down to MIN_SCALE
+  const sMax = Math.round(clamp(Math.min(w / 560, h / 330), 0.7, MAX_SCALE) * 20) / 20;
+  const bossW = clamp(Math.round(w * 0.28), 96, 240);
+  // the boss grows with the room, but its desk stays inside the glass corner and its tag under the sign
+  const bossFloorY = wallH + (h - wallH) * 0.55;
+  const bossScale = Math.min(
+    clamp(bossW / 170, 0.5, 1) * Math.max(1, sMax),
+    (bossW * 0.64 - 4) / WS_RIGHT,
+    Math.max(0.5, (bossFloorY - SIGN_H - 12 - TAG_H) / HEAD_TOP),
+  );
   const dw = clamp(Math.round(h * 0.17), 34, 54);
   const dh = Math.round(dw * 1.6);
   const doorRect = { x: w - dw - 12, y: Math.max(SIGN_H + 10, wallH - dh), w: dw, h: Math.min(dh, wallH - SIGN_H - 10) };
@@ -216,11 +227,9 @@ export function roomLayout(session: Session, rect: Rect, prevSlots?: Record<stri
   const x1 = w - 10;
   const aw = x1 - x0;
 
-  // big rooms get bigger figures; crowded rooms shrink them down to 0.4
-  const sMax = Math.round(clamp(Math.min(w / 700, h / 400), 0.7, 1) * 20) / 20;
   const fit = (cells: number) => {
     let g = { scale: sMax, cols: 1, rows: 1, slotW: 0, slotH: 0, yMin: 0, yMax: 0 };
-    for (let s = sMax; s >= 0.4 - 1e-9; s -= 0.05) {
+    for (let s = sMax; s >= MIN_SCALE - 1e-9; s -= 0.05) {
       const scale = Math.round(s * 100) / 100;
       const slotW = Math.max(115 * scale, 92);
       const slotH = 94 * scale + TAG_H + 8;
@@ -229,7 +238,8 @@ export function roomLayout(session: Session, rect: Rect, prevSlots?: Record<stri
       const cols = Math.max(1, Math.floor(aw / slotW));
       const rows = yMax >= yMin ? Math.floor((yMax - yMin) / slotH) + 1 : 1;
       g = { scale, cols, rows, slotW, slotH, yMin, yMax };
-      if (cols * rows >= cells) break;
+      // a scale fits when every cell gets a desk, one workstation fits across and one row fits down
+      if (cols * rows >= cells && slotW <= aw && yMax >= yMin) break;
     }
     return g;
   };

@@ -116,8 +116,16 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 /* idle: hands resting on the desk, slow breathing */
 .char.sitting.pose-idle .arm { transform: rotate(-58deg); }
 .char.sitting.pose-idle .body { animation-duration: 3.6s; }
-/* compact-strip bust: upright and still */
+/* the receiver of a handoff waves even while seated (beats the seated arm poses above) */
+.char.sitting.cheer .arm.front { transform: rotate(-135deg); animation: rig-wave .4s infinite ease-in-out; }
+/* sitting down / standing up: hold the walk and breathe cycles so the body, legs and arms ease
+   between standing and seated (the animator adds this for ~.45s around a sit or stand) */
+.char.settling .body, .char.settling .limb, .char.settling .shin { animation: none; }
+/* compact-strip bust: upright and still; the needs-you wave stays small so the hand stays inside
+   the bust's viewBox */
 .char.bust .body, .char.bust .limb { transition: none; }
+@keyframes rig-wave-bust { 0%, 100% { transform: rotate(-160deg) } 50% { transform: rotate(-145deg) } }
+.char.bust.pose-wave .arm.front { transform: rotate(-155deg); animation: rig-wave-bust .5s infinite ease-in-out; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
