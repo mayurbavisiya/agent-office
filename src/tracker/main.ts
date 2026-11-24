@@ -25,7 +25,7 @@ const pidFile = join(dir, 'tracker.pid');
 
 let app;
 try {
-  app = await startApp({ configDir: dir, staticDir, version, startedBy });
+  app = await startApp({ configDir: dir, staticDir, version, startedBy, onShutdown: () => stop('POST /shutdown') });
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
   if (/in use/.test(msg)) process.exit(0); // another tracker (or the app) already serves this port

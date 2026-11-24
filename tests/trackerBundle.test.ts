@@ -68,4 +68,17 @@ describe('tracker bundle', () => {
     const code = await new Promise((res) => second.on('exit', res));
     expect(code).toBe(0);
   }, 20000);
+
+  it('POST /shutdown stops a plugin tracker and removes its pid file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ao-tr-'));
+    const port = await freePort();
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ port, token: 'tok' }));
+    const p = launch(dir);
+    await until(async () => ((await fetch(`http://127.0.0.1:${port}/state`, { headers: { 'X-Agent-Office-Token': 'tok' } })).status === 200 ? true : undefined));
+    const exited = new Promise((res) => p.on('exit', res));
+    const r = await fetch(`http://127.0.0.1:${port}/shutdown`, { method: 'POST', headers: { 'X-Agent-Office-Token': 'tok' } });
+    expect(r.status).toBe(202);
+    expect(await exited).toBe(0);
+    expect(existsSync(join(dir, 'tracker.pid'))).toBe(false);
+  }, 20000);
 });

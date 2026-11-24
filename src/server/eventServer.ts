@@ -36,7 +36,7 @@ function reply(res: ServerResponse, status: number, body = '', headers: Record<s
 export type StartedBy = 'plugin' | 'app' | 'serve';
 export type EventServer = { url: string; clientCount(): number; close(): Promise<void> };
 
-export function startEventServer(opts: { port: number; token: string; store: OfficeStore; staticDir: string; version?: string; startedBy?: StartedBy }): Promise<EventServer> {
+export function startEventServer(opts: { port: number; token: string; store: OfficeStore; staticDir: string; version?: string; startedBy?: StartedBy; onShutdown?: () => void }): Promise<EventServer> {
   const { port, token, store } = opts;
   const version = opts.version ?? '0.0.0';
   const startedBy: StartedBy = opts.startedBy ?? 'app';
@@ -121,6 +121,16 @@ export function startEventServer(opts: { port: number; token: string; store: Off
     reply(res, 200, JSON.stringify({ version, startedBy, seq, state: store.snapshot() }), { 'Content-Type': 'application/json; charset=utf-8' });
   }
 
+  /** `/office stop`: only a tracker the plugin started stops this way; the app quits from its menu. */
+  function handleShutdown(req: IncomingMessage, res: ServerResponse): void {
+    req.resume();
+    if (!tokenOk(req.headers['x-agent-office-token'], token)) return reply(res, 401, 'unauthorized');
+    if (startedBy !== 'plugin' || !opts.onShutdown) return reply(res, 409, `started by ${startedBy}`);
+    const onShutdown = opts.onShutdown;
+    res.once('finish', () => setImmediate(onShutdown));
+    reply(res, 202);
+  }
+
   async function handleStatic(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
     let rel: string;
     try {
@@ -146,6 +156,10 @@ export function startEventServer(opts: { port: number; token: string; store: Off
       if (url.pathname === '/event') {
         if (req.method !== 'POST') return reply(res, 405, 'method not allowed', { Allow: 'POST' });
         return handleEvent(req, res);
+      }
+      if (url.pathname === '/shutdown') {
+        if (req.method !== 'POST') return reply(res, 405, 'method not allowed', { Allow: 'POST' });
+        return handleShutdown(req, res);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, 'method not allowed');
       if (url.pathname === '/state') return handleState(req, res);

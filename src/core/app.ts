@@ -38,7 +38,7 @@ const RUNNING: ReadonlySet<AgentStatus> = new Set(['spawning', 'working', 'quiet
 /** `<repo>/dist/scene`, relative to this file (src/core or dist/core). */
 const defaultStaticDir = () => join(fileURLToPath(new URL('../..', import.meta.url)), 'dist', 'scene');
 
-export async function startApp(opts: { port?: number; token?: string; claudeDir?: string; staticDir?: string; configDir?: string; rescanMs?: number; version?: string; startedBy?: StartedBy } = {}): Promise<App> {
+export async function startApp(opts: { port?: number; token?: string; claudeDir?: string; staticDir?: string; configDir?: string; rescanMs?: number; version?: string; startedBy?: StartedBy; onShutdown?: () => void } = {}): Promise<App> {
   const cfg = opts.port !== undefined && opts.token !== undefined ? { port: opts.port, token: opts.token } : loadOrCreateConfig(opts.configDir);
   const port = opts.port ?? cfg.port;
   const token = opts.token ?? cfg.token;
@@ -295,7 +295,7 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
   const rescanTimer = setInterval(rescan, opts.rescanMs ?? 3000);
   let server: Awaited<ReturnType<typeof startEventServer>>;
   try {
-    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir(), version: opts.version, startedBy: opts.startedBy });
+    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir(), version: opts.version, startedBy: opts.startedBy, onShutdown: opts.onShutdown });
   } catch (err) {
     clearInterval(tick);
     clearInterval(rescanTimer);

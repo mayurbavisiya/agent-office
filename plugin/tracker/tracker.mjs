@@ -3929,6 +3929,14 @@ function startEventServer(opts) {
     if (!tokenOk(req.headers["x-agent-office-token"], token)) return reply(res, 401, "unauthorized");
     reply(res, 200, JSON.stringify({ version: version2, startedBy: startedBy2, seq, state: store.snapshot() }), { "Content-Type": "application/json; charset=utf-8" });
   }
+  function handleShutdown(req, res) {
+    req.resume();
+    if (!tokenOk(req.headers["x-agent-office-token"], token)) return reply(res, 401, "unauthorized");
+    if (startedBy2 !== "plugin" || !opts.onShutdown) return reply(res, 409, `started by ${startedBy2}`);
+    const onShutdown = opts.onShutdown;
+    res.once("finish", () => setImmediate(onShutdown));
+    reply(res, 202);
+  }
   async function handleStatic(req, res, pathname) {
     let rel;
     try {
@@ -3953,6 +3961,10 @@ function startEventServer(opts) {
       if (url.pathname === "/event") {
         if (req.method !== "POST") return reply(res, 405, "method not allowed", { Allow: "POST" });
         return handleEvent(req, res);
+      }
+      if (url.pathname === "/shutdown") {
+        if (req.method !== "POST") return reply(res, 405, "method not allowed", { Allow: "POST" });
+        return handleShutdown(req, res);
       }
       if (req.method !== "GET" && req.method !== "HEAD") return reply(res, 405, "method not allowed");
       if (url.pathname === "/state") return handleState(req, res);
@@ -5201,7 +5213,7 @@ async function startApp(opts = {}) {
   const rescanTimer = setInterval(rescan, opts.rescanMs ?? 3e3);
   let server;
   try {
-    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir(), version: opts.version, startedBy: opts.startedBy });
+    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir(), version: opts.version, startedBy: opts.startedBy, onShutdown: opts.onShutdown });
   } catch (err) {
     clearInterval(tick);
     clearInterval(rescanTimer);
@@ -5261,7 +5273,7 @@ var staticDir = join6(dirname2(fileURLToPath2(import.meta.url)), "scene");
 var pidFile = join6(dir, "tracker.pid");
 var app;
 try {
-  app = await startApp({ configDir: dir, staticDir, version, startedBy });
+  app = await startApp({ configDir: dir, staticDir, version, startedBy, onShutdown: () => stop("POST /shutdown") });
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
   if (/in use/.test(msg)) process.exit(0);

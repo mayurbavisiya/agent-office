@@ -150,3 +150,20 @@ every field as optional and tolerate garbage.
   exited pids, new/finished subagents (from `subagents/` + `meta.json`), and, for sessions that never
   sent a hook, `status` idle↔busy as Stop/UserPromptSubmit. Without the dir it falls back to the
   10-minute log mtime window.
+
+## The `/office` mod: classic hooks and a hooks module in one plugin (verified on Claude Code 2.1.331)
+
+- One `plugin/hooks/hooks.json` holds both: `"modules": ["./register.tsx"]` beside the classic
+  `"hooks"` map. `claude plugin validate plugin` lists the module and all nine `forward.sh` command
+  hooks under "Provides" and passes; `claude plugin test plugin` loads the module. So `forward.sh`
+  keeps forwarding every session's events, and the mod forwards nothing itself.
+- The module imports the pure helpers from `../mod/office` (no extension). Extensionless, `.js` and
+  `.ts` all load under `claude plugin test`; validate warns TS5097 on `.ts`, so the module uses the
+  extensionless form, which a headless `claude -p "/office" --plugin-dir` run also loaded. vitest
+  imports the same file as `../plugin/mod/office.js` (NodeNext). The helper file has no imports.
+- Mod gotchas met: `$` may only be spelled `$.noun.event(...)` (a `typeof $.process?.run` check
+  stops the module loading), so "no process noun here" is a rejected `$.process.run`, caught.
+  `$.process.run` waits for the child's pipes to close, so the launcher redirects the tracker's
+  stdio to /dev/null before `&`.
+- `/office` replies with `isTextDisplayOnly` and a token-free `context`: the person sees the link
+  with its token, the model reads it as `token=<hidden>`. The transcript row still holds the link.

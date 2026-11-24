@@ -51,3 +51,44 @@ describe('GET /state', () => {
     expect(Object.keys(after.state.sessions)).toEqual(['s1']);
   });
 });
+
+describe('POST /shutdown', () => {
+  async function bootAs(startedBy: 'plugin' | 'app') {
+    const port = await freePort();
+    const d = mkdtempSync(join(tmpdir(), 'ao-sd-'));
+    writeFileSync(join(d, 'index.html'), 'x');
+    let asked = 0;
+    const app = await startApp({ port, token: 'tk', configDir: d, claudeDir: mkdtempSync(join(tmpdir(), 'ao-cl-')), staticDir: d, startedBy, onShutdown: () => asked++ });
+    closers.push(() => app.close());
+    const post = (token?: string) => fetch(`${app.url}/shutdown`, { method: 'POST', headers: token ? { 'X-Agent-Office-Token': token } : {} });
+    return { app, post, asked: () => asked };
+  }
+
+  it('requires the token', async () => {
+    const { post, asked } = await bootAs('plugin');
+    expect((await post()).status).toBe(401);
+    expect((await post('nope')).status).toBe(401);
+    expect(asked()).toBe(0);
+  });
+
+  it('stops a tracker the plugin started', async () => {
+    const { post, asked } = await bootAs('plugin');
+    const r = await post('tk');
+    expect(r.status).toBe(202);
+    await new Promise((res) => setTimeout(res, 20));
+    expect(asked()).toBe(1);
+  });
+
+  it('refuses with 409 when the app runs it', async () => {
+    const { post, asked } = await bootAs('app');
+    expect((await post('tk')).status).toBe(409);
+    expect(asked()).toBe(0);
+  });
+
+  it('is POST only', async () => {
+    const { app, asked } = await bootAs('plugin');
+    const r = await fetch(`${app.url}/shutdown`, { headers: { 'X-Agent-Office-Token': 'tk' } });
+    expect(r.status).not.toBe(202);
+    expect(asked()).toBe(0);
+  });
+});
