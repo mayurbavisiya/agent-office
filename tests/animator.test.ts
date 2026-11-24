@@ -192,6 +192,7 @@ describe('walk choreography', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(cls.has('sitting')).toBe(true);
     expect(cls.has('walking')).toBe(false);
+    expect(dir.style.transform).toBe('scale(1,1)');
     expect(running.size).toBe(0);
   });
 });

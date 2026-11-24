@@ -250,9 +250,13 @@ export function setStepClasses(g: SVGGElement, classes: string[] | null): void {
   applyClasses(g);
 }
 
-/** The receiver of a handoff waves ('cheer') on top of whatever it is doing; survives snapshots. */
+/**
+ * The receiver of a handoff waves ('cheer') on top of whatever it is doing; survives snapshots.
+ * Counted (data-cheer), so overlapping celebrates on one receiver keep it waving until the last ends.
+ */
 export function setCheer(g: SVGGElement, on: boolean): void {
-  if (on) g.dataset.cheer = '1';
+  const n = Math.max(0, (Number(g.dataset.cheer) || 0) + (on ? 1 : -1));
+  if (n > 0) g.dataset.cheer = String(n);
   else delete g.dataset.cheer;
   applyClasses(g);
 }

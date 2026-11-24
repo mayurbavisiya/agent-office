@@ -284,6 +284,14 @@ function settle(c: SVGGElement): void {
   settleTimers.set(c, setTimeout(() => c.classList.remove('settling'), SETTLE_MS));
 }
 
+/** Ends a settle early (the walk cycle takes over from here). */
+function unsettle(c: SVGGElement): void {
+  const t = settleTimers.get(c);
+  if (t !== undefined) clearTimeout(t);
+  settleTimers.delete(c);
+  c.classList.remove('settling');
+}
+
 function dirOf(c: SVGGElement): SVGGElement | null {
   return c.querySelector<SVGGElement>(':scope > .anim > .dir');
 }
@@ -338,6 +346,8 @@ export async function walkStep(ctx: Ctx, c: SVGGElement, kind: AnimKind, from: P
     await wait(STAND_MS);
     // cancelled while standing up (cancelQueue restored the seated state)
     if (stepClassesOf(c) === null) return false;
+    // standing: drop the settle hold now, so the walk cycle (body bob included) starts with the move
+    unsettle(c);
     ms = Math.max(REDUCED_MS, ms - STAND_MS);
   }
   applyDelta(c, add, remove);

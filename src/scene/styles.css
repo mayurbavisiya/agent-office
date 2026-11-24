@@ -121,11 +121,13 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 /* sitting down / standing up: hold the walk and breathe cycles so the body, legs and arms ease
    between standing and seated (the animator adds this for ~.45s around a sit or stand) */
 .char.settling .body, .char.settling .limb, .char.settling .shin { animation: none; }
+/* the seated arm cycles (typing, (0,5,0)) are held too, so the arms ease onto the desk first */
+.char.settling:not(.walking):not(.bust) .limb.arm { animation: none; }
 /* compact-strip bust: upright and still; the needs-you wave stays small so the hand stays inside
    the bust's viewBox */
 .char.bust .body, .char.bust .limb { transition: none; }
 @keyframes rig-wave-bust { 0%, 100% { transform: rotate(-160deg) } 50% { transform: rotate(-145deg) } }
-.char.bust.pose-wave .arm.front { transform: rotate(-155deg); animation: rig-wave-bust .5s infinite ease-in-out; }
+.char.bust.pose-wave:not(.walking) .arm.front { transform: rotate(-155deg); animation: rig-wave-bust .5s infinite ease-in-out; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

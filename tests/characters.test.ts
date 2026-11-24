@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { personMarkup, stateClasses, RIG } from '../src/scene/characters.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { personMarkup, stateClasses, setCheer, RIG } from '../src/scene/characters.js';
 import { humanLook } from '../src/scene/looks.js';
 
 describe('stateClasses', () => {
@@ -49,5 +51,44 @@ describe('personMarkup', () => {
   it('stands about HEAD_TOP tall with feet at 0', () => {
     expect(RIG.leg + RIG.torso + RIG.head * 2).toBeGreaterThanOrEqual(56);
     expect(RIG.leg + RIG.torso + RIG.head * 2).toBeLessThanOrEqual(60);
+  });
+});
+
+describe('handoff cheer and bust wave', () => {
+  /** A g.char stub with real class bookkeeping (setCheer touches only dataset and classList). */
+  function charStub() {
+    const cls = new Set<string>();
+    const g = {
+      dataset: { pose: 'pose-type' } as Record<string, string>,
+      classList: { add: (...n: string[]) => n.forEach((x) => cls.add(x)), remove: (...n: string[]) => n.forEach((x) => cls.delete(x)) },
+    };
+    return { g: g as unknown as SVGGElement, cls };
+  }
+
+  it('cheer is counted: overlapping celebrates keep the receiver waving until the last ends', () => {
+    const { g, cls } = charStub();
+    setCheer(g, true);
+    setCheer(g, true);
+    expect(cls.has('cheer')).toBe(true);
+    setCheer(g, false);
+    expect(cls.has('cheer')).toBe(true);
+    setCheer(g, false);
+    expect(cls.has('cheer')).toBe(false);
+    expect(cls.has('sitting')).toBe(true);
+    setCheer(g, false);
+    expect(g.dataset.cheer).toBeUndefined();
+  });
+
+  it('the small bust wave outranks the full needs-you wave in styles.css', () => {
+    const css = readFileSync(fileURLToPath(new URL('../src/scene/styles.css', import.meta.url)), 'utf8');
+    const ruleIndex = (sel: string) => css.split('\n').findIndex((l) => l.split('{')[0].split(',').some((s) => s.trim() === sel));
+    // class / pseudo-class count (no ids or elements here); :not() adds only its argument's
+    const spec = (sel: string) => (sel.replace(/:not\(/g, '(').match(/[.:]/g) ?? []).length;
+    const full = '.char.pose-wave:not(.walking) .arm.front';
+    const bust = [...css.matchAll(/^(\.char\.bust\.pose-wave[^{,]*\.arm\.front)\s*\{[^}]*rig-wave-bust/gm)].map((m) => m[1].trim());
+    expect(ruleIndex(full)).toBeGreaterThanOrEqual(0);
+    expect(bust).toHaveLength(1);
+    const ok = spec(bust[0]) > spec(full) || (spec(bust[0]) === spec(full) && ruleIndex(bust[0]) > ruleIndex(full));
+    expect(ok).toBe(true);
   });
 });
