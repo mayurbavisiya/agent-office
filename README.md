@@ -19,7 +19,7 @@ A panel opens beside the chat. You need Node 20 or newer on your PATH.
 
 - One room per Claude Code session, with a pixel person for each agent.
 - Name chips under the rooms. Press a chip to open that agent's details (tokens, estimated cost, tools, recent activity). Press close to go back.
-- "+N more" when there are more chips than fit.
+- "+N more" in the room view when there are more rooms than fit, and "+N" at the end of the chip row when there are more chips than fit.
 - `/office` also prints the full office link. Open it in a browser to see the animated office.
 - On the desktop app or VS Code, the panel is a text list of rooms and agents with their status, plus the chips.
 
@@ -29,7 +29,7 @@ Type `/office stop` to stop the tracker.
 
 `/office` starts a small background tracker if none is running. It needs Node 20+. It exits on its own after 30 minutes with no busy session. Its log is `~/.agent-office/tracker.log`. If the desktop app is already running, `/office` uses it and leaves it alone.
 
-Without a tracker, the panel says to run `/office` once in terminal Claude, or open the Agent Office app.
+With no tracker answering, the panel shows "office tracker not running — run /office". On a surface that cannot start processes, `/office` says to run it once in terminal Claude, or open the Agent Office app.
 
 The plugin also forwards hook events (`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `Stop`, `Notification`, `SubagentStart`, `SubagentStop`, `PreToolUse`, `PostToolUse`) with `plugin/scripts/forward.sh`. The hooks are `async: true` and the script uses `curl --max-time 1`. With nothing listening, a hook run took about 14 ms, exited 0 and printed nothing, so Claude Code is unaffected. Without hooks, sessions are still found by rescanning `~/.claude/sessions/*.json` (or `$CLAUDE_CONFIG_DIR`) every 3 seconds.
 
