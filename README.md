@@ -63,7 +63,7 @@ Everything lives in `~/.agent-office/` (override the folder with the `AGENT_OFFI
 
 ## Privacy
 
-Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only, and every request needs the token from `config.json`. The `.key` files in the session registry are never read.
+Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only. The hook event endpoint and the live connection the office window uses both require the token from `config.json` (the plugin sends it in a header, never on the command line); the office page's static files are served without it. The `.key` files in the session registry are never read.
 
 ## Known limits
 

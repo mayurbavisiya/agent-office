@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -33,10 +33,12 @@ function homeWith(config: object | null): string {
   return home;
 }
 
-function run(home: string, stdin: string) {
+function run(home: string, stdin: string, env: Record<string, string> = {}) {
   return new Promise<{ code: number | null; out: string; err: string; ms: number }>((resolveRun, reject) => {
     const t0 = Date.now();
-    const p = spawn('sh', [SCRIPT], { env: { ...process.env, HOME: home } });
+    const base = { ...process.env };
+    delete base.AGENT_OFFICE_DIR;
+    const p = spawn('sh', [SCRIPT], { env: { ...base, HOME: home, ...env } });
     let out = '';
     let err = '';
     p.stdout.on('data', (d) => (out += d));
@@ -102,6 +104,29 @@ describe('forward.sh', () => {
     const sessions = store.snapshot().sessions;
     expect(Object.keys(sessions)).toEqual(['BIG-1']);
     expect(sessions['BIG-1'].label).toBe('tail-proj');
+  });
+
+  it('honours AGENT_OFFICE_DIR for the config location', async () => {
+    const { store, port } = await boot();
+    const dir = mkdtempSync(join(tmpdir(), 'ao-dir-'));
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ port, token: TOKEN }));
+    const r = await run(homeWith(null), JSON.stringify(ev()), { AGENT_OFFICE_DIR: dir });
+    expect(r).toMatchObject({ code: 0, out: '', err: '' });
+    expect(Object.keys(store.snapshot().sessions)).toContain('S1');
+  });
+
+  it('never puts the token on the curl command line', async () => {
+    // a fake curl on PATH records its argv
+    const bin = mkdtempSync(join(tmpdir(), 'ao-bin-'));
+    const argv = join(bin, 'argv.txt');
+    writeFileSync(join(bin, 'curl'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${argv}'\ncat >/dev/null\nexit 0\n`);
+    chmodSync(join(bin, 'curl'), 0o755);
+    const r = await run(homeWith({ port: 1, token: 'secret-token-xyz' }), JSON.stringify(ev()), { PATH: `${bin}:${process.env.PATH}` });
+    expect(r).toMatchObject({ code: 0, out: '', err: '' });
+    expect(existsSync(argv)).toBe(true);
+    const args = readFileSync(argv, 'utf8');
+    expect(args).toContain('--max-time');
+    expect(args).not.toContain('secret-token-xyz');
   });
 
   it('with a server that accepts but never responds, exits 0 within the curl timeout', async () => {
