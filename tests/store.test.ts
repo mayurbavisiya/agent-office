@@ -159,11 +159,11 @@ describe('OfficeStore: sessions', () => {
     expect(Object.keys(s.snapshot().sessions).sort()).toEqual(['S1', 'S2']);
   });
 
-  it('SessionStart source resume with a new id in same cwd as a quiet (idle) session takes over', () => {
+  it('SessionStart source resume with a new id never takes over a quiet (idle) room: resume keeps its id', () => {
     const s = new OfficeStore();
     s.applyHook(ev({ hook_event_name: 'SessionStart', source: 'startup' }), 0);
     const out = s.applyHook(ev({ hook_event_name: 'SessionStart', session_id: 'S2', source: 'resume' }), 200);
-    expect(out).toEqual([{ kind: 'shift_change', fromSessionId: 'S1', toSessionId: 'S2' }]);
+    expect(out).toEqual([{ kind: 'session_started', sessionId: 'S2' }]);
   });
 
   it('clear does not take over a busy room (boss working) or one in another folder', () => {
@@ -637,5 +637,123 @@ describe('registry helpers', () => {
     expect(a.type).toBe('Explore');
     expect(a.task).toBe('look around');
     expect(ev.filter((e) => e.kind === 'spawned')).toHaveLength(1);
+  });
+});
+
+describe('OfficeStore: final-review fixes', () => {
+  const start = (s: OfficeStore, id: string, cwd: string, t: number) => {
+    s.applyHook({ hook_event_name: 'SessionStart', source: 'startup', session_id: id, cwd }, t);
+    s.applyHook({ hook_event_name: 'Stop', session_id: id, cwd }, t + 1);
+  };
+
+  it('resume for an unknown id in a shared cwd does not take over another live room', () => {
+    const s = new OfficeStore();
+    start(s, 'A', '/p', 0);
+    const out = s.applyHook({ hook_event_name: 'SessionStart', source: 'resume', session_id: 'X', cwd: '/p' }, 100);
+    expect(out.some((e) => e.kind === 'shift_change')).toBe(false);
+    s.applyHook({ hook_event_name: 'UserPromptSubmit', session_id: 'A', cwd: '/p', prompt: 'still here' }, 200);
+    expect(Object.keys(s.snapshot().sessions).sort()).toEqual(['A', 'X']);
+    expect(s.snapshot().sessions.A.boss.status).toBe('working');
+  });
+
+  it('compact for an unknown id does not take over either', () => {
+    const s = new OfficeStore();
+    start(s, 'A', '/p', 0);
+    const out = s.applyHook({ hook_event_name: 'SessionStart', source: 'compact', session_id: 'X', cwd: '/p' }, 100);
+    expect(out.some((e) => e.kind === 'shift_change')).toBe(false);
+    expect(Object.keys(s.snapshot().sessions).sort()).toEqual(['A', 'X']);
+  });
+
+  it('clear takes over the ended room, not another idle room in the same cwd', () => {
+    const s = new OfficeStore();
+    start(s, 'A', '/p', 0);
+    start(s, 'B', '/p', 10);
+    // B is the more recently active idle room; A is the one that cleared
+    s.applyHook({ hook_event_name: 'SessionEnd', reason: 'clear', session_id: 'A', cwd: '/p' }, 900);
+    s.applyHook({ hook_event_name: 'Stop', session_id: 'B', cwd: '/p' }, 950);
+    const out = s.applyHook({ hook_event_name: 'SessionStart', source: 'clear', session_id: 'A2', cwd: '/p' }, 1000);
+    expect(out).toEqual([{ kind: 'shift_change', fromSessionId: 'A', toSessionId: 'A2' }]);
+    expect(Object.keys(s.snapshot().sessions).sort()).toEqual(['A2', 'B']);
+  });
+
+  it('clear with no ended room does not take over when two live rooms share the cwd', () => {
+    const s = new OfficeStore();
+    start(s, 'A', '/p', 0);
+    start(s, 'B', '/p', 10);
+    const out = s.applyHook({ hook_event_name: 'SessionStart', source: 'clear', session_id: 'C', cwd: '/p' }, 1000);
+    expect(out.some((e) => e.kind === 'shift_change')).toBe(false);
+    expect(Object.keys(s.snapshot().sessions).sort()).toEqual(['A', 'B', 'C']);
+  });
+
+  it('clear does not take over a room that ended for another reason', () => {
+    const s = new OfficeStore();
+    start(s, 'A', '/p', 0);
+    start(s, 'B', '/p', 10);
+    s.applyHook({ hook_event_name: 'SessionEnd', reason: 'other', session_id: 'A', cwd: '/p' }, 900);
+    s.applyHook({ hook_event_name: 'UserPromptSubmit', session_id: 'B', cwd: '/p', prompt: 'x' }, 950);
+    const out = s.applyHook({ hook_event_name: 'SessionStart', source: 'clear', session_id: 'C', cwd: '/p' }, 1000);
+    expect(out.some((e) => e.kind === 'shift_change')).toBe(false);
+  });
+
+  it('rescan clear with an explicit target takes over that room', () => {
+    const s = new OfficeStore();
+    start(s, 'A', '/p', 0);
+    start(s, 'B', '/p', 10);
+    s.applyHook({ hook_event_name: 'Stop', session_id: 'B', cwd: '/p' }, 500);
+    // explicit target: even with both rooms live and idle, A is the one replaced
+    const out = s.applyHook({ hook_event_name: 'SessionStart', source: 'clear', session_id: 'A2', cwd: '/p', replaces: 'A' }, 1000);
+    expect(out).toEqual([{ kind: 'shift_change', fromSessionId: 'A', toSessionId: 'A2' }]);
+    expect(Object.keys(s.snapshot().sessions).sort()).toEqual(['A2', 'B']);
+  });
+
+  it('needs_you clears when the permission prompt is answered (PostToolUse, then Stop)', () => {
+    const s = new OfficeStore();
+    const e = (o: Partial<HookEvent> & { hook_event_name: string }) => ({ session_id: 'S1', cwd: '/p', ...o }) as HookEvent;
+    s.applyHook(e({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), 0);
+    s.applyHook(e({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't1', tool_input: {} }), 10);
+    s.applyHook(e({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }), 20);
+    expect(s.snapshot().sessions.S1.boss.status).toBe('needs_you');
+    s.applyHook(e({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 't1' }), 5000);
+    expect(s.snapshot().sessions.S1.boss.status).toBe('working');
+    s.applyHook(e({ hook_event_name: 'Stop' }), 6000);
+    expect(s.snapshot().sessions.S1.boss.status).toBe('idle');
+  });
+
+  it('needs_you clears on Stop after a denied tool (no PostToolUse)', () => {
+    const s = new OfficeStore();
+    const e = (o: Partial<HookEvent> & { hook_event_name: string }) => ({ session_id: 'S1', cwd: '/p', ...o }) as HookEvent;
+    s.applyHook(e({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), 0);
+    s.applyHook(e({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 't1', tool_input: {} }), 10);
+    s.applyHook(e({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }), 20);
+    s.applyHook(e({ hook_event_name: 'Stop' }), 6000);
+    expect(s.snapshot().sessions.S1.boss.status).toBe('idle');
+  });
+
+  it("a subagent's permission prompt clears when that subagent's tool runs", () => {
+    const s = new OfficeStore();
+    const e = (o: Partial<HookEvent> & { hook_event_name: string }) => ({ session_id: 'S1', cwd: '/p', ...o }) as HookEvent;
+    s.applyHook(e({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }), 0);
+    s.applyHook(e({ hook_event_name: 'SubagentStart', agent_id: 'k', agent_type: 'Explore' }), 5);
+    s.applyHook(e({ hook_event_name: 'PreToolUse', agent_id: 'k', tool_name: 'Bash', tool_use_id: 't1' }), 10);
+    s.applyHook(e({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }), 20);
+    expect(s.snapshot().sessions.S1.boss.status).toBe('needs_you');
+    s.applyHook(e({ hook_event_name: 'PostToolUse', agent_id: 'k', tool_name: 'Bash', tool_use_id: 't1' }), 3000);
+    expect(s.snapshot().sessions.S1.boss.status).not.toBe('needs_you');
+  });
+
+  it('a clear keeps the room in its floor slot: A, B, C then a clear in A orders A2, B, C', () => {
+    const s = new OfficeStore();
+    start(s, 'A', '/A', 0);
+    start(s, 'B', '/B', 10);
+    start(s, 'C', '/C', 20);
+    s.applyHook({ hook_event_name: 'SessionEnd', reason: 'clear', session_id: 'A', cwd: '/A' }, 1000);
+    s.applyHook({ hook_event_name: 'SessionStart', source: 'clear', session_id: 'A2', cwd: '/A' }, 1001);
+    const ss = s.snapshot().sessions;
+    expect(ss.A2.floorSince).toBe(0);
+    expect(ss.A2.boss.startedAt).toBe(1001);
+    const order = Object.values(ss)
+      .sort((a, b) => a.floorSince! - b.floorSince!)
+      .map((x) => x.id);
+    expect(order).toEqual(['A2', 'B', 'C']);
   });
 });

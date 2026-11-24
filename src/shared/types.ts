@@ -39,6 +39,8 @@ export type HookEvent = {
     [k: string]: unknown;
   }>;
   last_assistant_message?: string;
+  /** Synthetic only (rescan): on SessionStart(clear), the session id this one replaced (same process). */
+  replaces?: string;
   [k: string]: unknown;
 };
 
@@ -91,6 +93,8 @@ export type Session = {
   boss: { status: BossStatus; startedAt: number; stats: AgentStats };
   agents: Record<string, Agent>;
   lastActivity: number;
+  /** floor order key (ms): set when the room is created, carried over on a /clear takeover so the room keeps its slot */
+  floorSince?: number;
 };
 
 export type OfficeState = { sessions: Record<string, Session> };

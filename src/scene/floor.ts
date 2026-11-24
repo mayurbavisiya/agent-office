@@ -16,9 +16,14 @@ export class Floor {
     private readonly viewport: HTMLElement,
   ) {}
 
-  /** Sessions in floor order: oldest first, stable by id. */
+  /**
+   * Sessions in floor order: oldest room first, stable by id. The key is the store's floorSince (carried over
+   * on a /clear takeover, so the successor gets the same slot and the shift change plays in place), else
+   * boss.startedAt.
+   */
   static order(state: OfficeState): Session[] {
-    return Object.values(state.sessions).sort((a, b) => a.boss.startedAt - b.boss.startedAt || (a.id < b.id ? -1 : 1));
+    const key = (s: Session) => s.floorSince ?? s.boss.startedAt;
+    return Object.values(state.sessions).sort((a, b) => key(a) - key(b) || (a.id < b.id ? -1 : 1));
   }
 
   get state(): OfficeState {

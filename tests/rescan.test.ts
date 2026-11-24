@@ -219,6 +219,20 @@ describe('rescan', () => {
     expect(events.some((e) => e.kind === 'shift_change')).toBe(false);
   });
 
+  it('rescan clear names its target: the replaced room is taken over, never another live room in the cwd', async () => {
+    const h = home();
+    h.register(process.pid, 'OLD', { status: 'idle' });
+    h.register(process.ppid, 'OTHER', { status: 'idle' });
+    const { app, events } = await boot(h.dir);
+    // OLD's room has already ended (not by a clear); OTHER is the cwd's only live, idle room
+    app.store.applyHook({ hook_event_name: 'SessionEnd', session_id: 'OLD', reason: 'other' }, Date.now());
+    h.register(process.pid, 'NEW', { status: 'idle', formerNames: [{ sessionId: 'OLD' }] });
+    await until(() => !!app.store.snapshot().sessions.NEW);
+    await sleep(150);
+    expect(Object.keys(app.store.snapshot().sessions).sort()).toEqual(['NEW', 'OTHER']);
+    expect(events).toContainEqual({ kind: 'shift_change', fromSessionId: 'OLD', toSessionId: 'NEW' });
+  });
+
   it('a busy registry session that /clears keeps a working boss', async () => {
     const h = home();
     h.register(process.pid, 'OLD', { status: 'idle' });

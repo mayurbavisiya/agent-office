@@ -15,7 +15,8 @@ export const LINGER_MS = 60_000;
 /** spawning → working without activity after this long */
 export const SPAWN_MS = 2_000;
 const MAX_PENDING = 100;
-const TAKEOVER_SOURCES = new Set(['clear', 'resume', 'compact']);
+/** open PreToolUse calls remembered per session (to know which agent a permission prompt belongs to) */
+const MAX_OPEN_TOOLS = 50;
 const RUNNING: ReadonlySet<AgentStatus> = new Set(['spawning', 'working', 'quiet']);
 /** idle_prompt is deliberately absent: it fires ~60 s after Stop, which is the spec's idle (sleeping) state. */
 const NEEDS_YOU_TYPES = new Set(['permission_prompt', 'elicitation_dialog']);
@@ -38,6 +39,12 @@ type SessionMeta = {
   /** main agent's own phase; BossStatus is derived from it + needsYou + running agents */
   main: 'working' | 'stopped';
   needsYou: boolean;
+  /** who raised needsYou: an agent id, or null for the main agent */
+  needsYouBy?: string | null;
+  /** PreToolUse calls without their PostToolUse yet, oldest first (agent null = main) */
+  openTools: Array<{ id?: string; agent: string | null }>;
+  /** the session ended with SessionEnd(reason: clear): a /clear successor may take its room over */
+  endedByClear?: boolean;
   title?: string;
   endedAt?: number;
   pending: PendingSpawn[];
@@ -97,6 +104,7 @@ function transitionSession(s: Session, m: SessionMeta, input: SessionInput, now:
       if (s.status !== 'ended') return null;
       s.status = 'active';
       m.endedAt = undefined;
+      m.endedByClear = undefined;
       transitionBoss(s, m, 'reset');
       return 'session_started';
     case 'end':
@@ -148,7 +156,7 @@ function transitionAgent(a: Agent, input: AgentInput, now: number, stuckMs: numb
   }
 }
 
-type BossInput = 'human_prompt' | 'main_activity' | 'pre_tool' | 'stop' | 'needs_you' | 'reset' | 'recompute';
+type BossInput = 'human_prompt' | 'main_activity' | 'answered' | 'stop' | 'needs_you' | 'reset' | 'recompute';
 
 /** Updates the main agent's phase and derives BossStatus. Returns true if the visible status changed. */
 function transitionBoss(s: Session, m: SessionMeta, input: BossInput): boolean {
@@ -160,11 +168,14 @@ function transitionBoss(s: Session, m: SessionMeta, input: BossInput): boolean {
     case 'main_activity':
       m.main = 'working';
       break;
-    case 'pre_tool':
+    case 'answered':
       m.needsYou = false;
       break;
     case 'stop':
       m.main = 'stopped';
+      // the turn is over: a prompt the main agent raised was answered or denied. One raised by a subagent
+      // that is still running stays until that subagent moves on.
+      if (m.needsYouBy == null || !RUNNING.has(s.agents[m.needsYouBy]?.status as AgentStatus)) m.needsYou = false;
       break;
     case 'needs_you':
       m.needsYou = true;
@@ -216,6 +227,11 @@ export class OfficeStore {
 
   snapshot(): OfficeState {
     return { sessions: structuredClone(this.sessions) };
+  }
+
+  /** The live sessions, uncloned. Read-only: for cheap membership checks; never mutate or keep the result. */
+  peek(): Readonly<Record<string, Readonly<Session>>> {
+    return this.sessions;
   }
 
   applyHook(e: HookEvent, now: number): OfficeEvent[] {
@@ -273,6 +289,7 @@ export class OfficeStore {
         s.boss.stats = applyDelta(s.boss.stats, delta);
         s.boss.stats.lastActivity = now;
         if (delta.timestamp !== undefined && delta.timestamp < s.boss.startedAt) s.boss.startedAt = delta.timestamp;
+        if (delta.timestamp !== undefined && delta.timestamp < (s.floorSince ?? Infinity)) s.floorSince = delta.timestamp;
       }
       s.lastActivity = now;
       transitionBoss(s, m, 'recompute');
@@ -370,8 +387,9 @@ export class OfficeStore {
     const cwd = str(e.cwd);
     const agentId = str(e.agent_id);
 
-    if (name === 'SessionStart' && !this.sessions[sid] && TAKEOVER_SOURCES.has(str(e.source) ?? '')) {
-      if (this.takeOver(sid, cwd, now, out)) return;
+    // Only /clear starts a new id in an existing room: resume and compact keep their session_id (hook-notes §5).
+    if (name === 'SessionStart' && !this.sessions[sid] && e.source === 'clear') {
+      if (this.takeOver(sid, cwd, str(e.replaces), now, out)) return;
     }
 
     const s = this.ensureSession(sid, cwd, now, out);
@@ -393,7 +411,10 @@ export class OfficeStore {
       case 'PreToolUse':
       case 'PostToolUse': {
         const tool = str(e.tool_name);
-        if (name === 'PreToolUse') transitionBoss(s, m, 'pre_tool');
+        const caller = agentId ?? null;
+        // the agent that raised the prompt moved on: it was answered
+        if (m.needsYou && (m.needsYouBy ?? null) === caller) transitionBoss(s, m, 'answered');
+        this.trackOpenTool(m, name, str(e.tool_use_id), caller);
         if (tool === 'SubagentHandback') break; // internal tool: not activity (hook-notes §1)
         if (agentId) this.agentActivity(s, m, agentId, e, now, out);
         else transitionBoss(s, m, 'main_activity');
@@ -422,19 +443,27 @@ export class OfficeStore {
       case 'SubagentStop':
         if (agentId) {
           const a = this.ensureAgent(s, m, agentId, now, out, { type: str(e.agent_type) });
+          if (m.needsYou && m.needsYouBy === agentId) transitionBoss(s, m, 'answered');
+          m.openTools = m.openTools.filter((t) => t.agent !== agentId);
           if (a && transitionAgent(a, 'stop', now, this.stuckMs) === 'handoff') {
             out.push({ kind: 'handoff', sessionId: sid, agentId, toId: a.parentId ?? 'boss' });
           }
         }
         break;
       case 'Stop':
+        m.openTools = m.openTools.filter((t) => t.agent !== null);
         transitionBoss(s, m, 'stop');
         this.adoptBackgroundTasks(s, m, e, now, out);
         break;
       case 'Notification':
-        if (isNeedsYouNotification(e)) transitionBoss(s, m, 'needs_you');
+        if (isNeedsYouNotification(e)) {
+          // the notification names its agent when it has one; otherwise the newest open tool call raised it
+          m.needsYouBy = agentId ?? m.openTools[m.openTools.length - 1]?.agent ?? null;
+          transitionBoss(s, m, 'needs_you');
+        }
         break;
       case 'SessionEnd':
+        if (s.status !== 'ended') m.endedByClear = e.reason === 'clear';
         if (transitionSession(s, m, 'end', now, this.endedMs) === 'session_ended') out.push({ kind: 'session_ended', sessionId: sid });
         break;
       default:
@@ -454,9 +483,10 @@ export class OfficeStore {
         boss: { status: 'idle', startedAt: now, stats: emptyStats(now) },
         agents: {},
         lastActivity: now,
+        floorSince: now,
       };
       this.sessions[sid] = s;
-      this.meta.set(sid, { main: 'stopped', needsYou: false, pending: [], retired: new Set() });
+      this.meta.set(sid, { main: 'stopped', needsYou: false, openTools: [], pending: [], retired: new Set() });
       out.push({ kind: 'session_started', sessionId: sid });
     } else if (cwd && !s.cwd) {
       s.cwd = cwd;
@@ -471,14 +501,32 @@ export class OfficeStore {
     for (const [k, l] of this.teammates) if (l.leadSessionId === sid) this.teammates.delete(k);
   }
 
-  /** clear/resume/compact SessionStart with a new id takes over an idle or just-ended room in the same cwd. */
-  private takeOver(sid: string, cwd: string | undefined, now: number, out: OfficeEvent[]): boolean {
-    if (!cwd) return false;
+  /**
+   * A SessionStart(clear) with a new id takes over the room of the conversation it replaced (spec: room
+   * lifecycle). In order: the explicitly named `replaces` room (the rescan knows it from the registry); else
+   * the room in the cwd that most recently ended with SessionEnd(reason: clear); else, when SessionStart(clear)
+   * arrives before the old id's SessionEnd, the cwd's only live room if it is idle. With two or more live rooms
+   * in the cwd and no ended one, nothing is taken over: two live sessions in one folder keep separate rooms.
+   */
+  private takeOver(sid: string, cwd: string | undefined, replaces: string | undefined, now: number, out: OfficeEvent[]): boolean {
     let from: Session | undefined;
-    for (const s of Object.values(this.sessions)) {
-      if (s.cwd !== cwd) continue;
-      if (s.status !== 'ended' && s.boss.status !== 'idle') continue;
-      if (!from || s.lastActivity > from.lastActivity) from = s;
+    if (replaces) {
+      const t = this.sessions[replaces];
+      // the named room is gone (pruned) or elsewhere: nothing to hand over, and no guessing
+      if (!t || t.id === sid || (cwd && t.cwd && t.cwd !== cwd)) return false;
+      from = t;
+    } else {
+      if (!cwd) return false;
+      const here = Object.values(this.sessions).filter((s) => s.cwd === cwd);
+      for (const s of here) {
+        const m = this.meta.get(s.id)!;
+        if (s.status !== 'ended' || !m.endedByClear) continue;
+        if (!from || (m.endedAt ?? 0) > (this.meta.get(from.id)!.endedAt ?? 0)) from = s;
+      }
+      if (!from) {
+        const live = here.filter((s) => s.status === 'active');
+        if (live.length === 1 && live[0].boss.status === 'idle') from = live[0];
+      }
     }
     if (!from) return false;
     this.removeSession(from.id);
@@ -486,10 +534,22 @@ export class OfficeStore {
     this.replaced.set(from.id, sid);
     if (this.replaced.size > MAX_REPLACED) this.replaced.delete(this.replaced.keys().next().value!);
     const sink: OfficeEvent[] = [];
-    const s = this.ensureSession(sid, cwd, now, sink);
+    const s = this.ensureSession(sid, cwd ?? from.cwd, now, sink);
     s.branch = from.branch;
+    // same slot on the floor; boss.startedAt stays the new conversation's (the panel's running time)
+    s.floorSince = from.floorSince ?? from.boss.startedAt;
     out.push({ kind: 'shift_change', fromSessionId: from.id, toSessionId: sid });
     return true;
+  }
+
+  private trackOpenTool(m: SessionMeta, name: string, toolUseId: string | undefined, agent: string | null): void {
+    if (name === 'PreToolUse') {
+      m.openTools.push({ id: toolUseId, agent });
+      if (m.openTools.length > MAX_OPEN_TOOLS) m.openTools = m.openTools.slice(-MAX_OPEN_TOOLS);
+      return;
+    }
+    const i = toolUseId ? m.openTools.findIndex((t) => t.id === toolUseId) : m.openTools.findIndex((t) => t.agent === agent);
+    if (i >= 0) m.openTools.splice(i, 1);
   }
 
   /**

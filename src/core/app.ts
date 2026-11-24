@@ -58,6 +58,8 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
     if (!path || tracked.has(path) || dropped.has(path)) return;
     tracked.set(path, { sessionId, agentId, seen: false });
     watcher.watch(sessionId, agentId, path, { fromStart: true });
+    // a session already seen and pruned never sends another change: drop the watch now rather than leak it
+    syncWatches();
   };
 
   const seenSessions = new Set<string>();
@@ -65,7 +67,7 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
    * A session seen once and now absent drops every path under it (even agents never seen); an agent seen once
    * and now absent drops its own path. */
   const syncWatches = (): void => {
-    const sessions = store.snapshot().sessions;
+    const sessions = store.peek();
     for (const [path, t] of tracked) {
       const s = sessions[t.sessionId];
       if (s) {
@@ -198,15 +200,19 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
             const d = sessionFromRegistry(cdir, r);
             let started = false;
             if (old) {
-              // same process, new session id: /clear. End first, so the store's takeover sees an ended room
-              // in this cwd and turns the start into a shift change instead of a second room. Without the
-              // old room there is nothing to hand over: a plain discovered start (a 'clear' start would take
-              // over some other idle room in the cwd).
+              // same process, new session id: /clear. The start names the replaced room (`replaces`), so the
+              // store hands exactly that room over (a shift change, not a second room) and never guesses
+              // another room in the cwd. Without the old room there is nothing to hand over: a plain
+              // discovered start.
               const cur = store.snapshot().sessions;
               known.delete(old);
               if (cur[old]?.status === 'active') synth({ hook_event_name: 'SessionEnd', session_id: old, reason: 'clear' });
               if (!cur[r.sessionId]) {
-                synth({ hook_event_name: 'SessionStart', source: cur[old] ? 'clear' : 'discovered', session_id: r.sessionId, cwd: d.cwd ?? cur[old]?.cwd });
+                synth(
+                  cur[old]
+                    ? { hook_event_name: 'SessionStart', source: 'clear', replaces: old, session_id: r.sessionId, cwd: d.cwd ?? cur[old].cwd }
+                    : { hook_event_name: 'SessionStart', source: 'discovered', session_id: r.sessionId, cwd: d.cwd },
+                );
                 started = true;
               }
             }
