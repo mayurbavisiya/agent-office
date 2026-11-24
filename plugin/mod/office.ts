@@ -54,4 +54,5 @@ export const MESSAGES = {
   stopped: 'Stopped the office tracker.',
   appRuns: 'The office tracker is run by the Agent Office app — quit it from the menu bar.',
   noneRunning: 'No office tracker is running.',
+  restartFailed: "Couldn't restart the office tracker for the update; using the running one.",
 } as const

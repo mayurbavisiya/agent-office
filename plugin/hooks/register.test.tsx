@@ -8,7 +8,7 @@ const PORT = 47999
 const TOKEN = 'tok-test-123'
 const PLUGIN_VERSION = '0.1.0'
 
-type Answer = 'refused' | { status: number; json?: unknown; text?: string }
+type Answer = 'refused' | 'hang' | { status: number; json?: unknown; text?: string }
 
 const ours = (over: Record<string, unknown> = {}): Answer => ({
   status: 200,
@@ -33,7 +33,7 @@ function world(on: On, w: World) {
   let launched = false
   let probes = 0
 
-  mock.clock(on)
+  const clock = mock.clock(on)
   mock.env(on, { AGENT_OFFICE_DIR: DIR, HOME: '/home/u' })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
@@ -81,12 +81,13 @@ function world(on: On, w: World) {
     }
     const a = w.state[Math.min(probes, w.state.length - 1)]
     probes++
+    if (a === 'hang') return new Promise<never>(() => undefined)
     if (a === undefined || a === 'refused') return { deny: 'connect ECONNREFUSED 127.0.0.1' }
     const text = a.text ?? (a.json === undefined ? '' : JSON.stringify(a.json))
     return { value: { status: a.status, ok: a.status < 300, headers: {}, text } }
   })
 
-  return { runs, opened, posts, probes: () => probes }
+  return { runs, opened, posts, clock, probes: () => probes }
 }
 
 async function office($: Engine, args = '') {
@@ -98,6 +99,23 @@ async function office($: Engine, args = '') {
     presentation: { isFullscreen: true, columns: 160 },
   })
   return r.text ?? ''
+}
+
+/** Runs `/office` while moving the mocked clock, so waits on it come due. */
+async function officeOverTime(
+  $: Engine,
+  clock: ReturnType<typeof mock.clock>,
+  args = '',
+): Promise<{ text: string; clockMs: number; realMs: number }> {
+  const t0 = Date.now()
+  const c0 = clock.now()
+  let done = false
+  const run = office($, args).finally(() => {
+    done = true
+  })
+  for (let i = 0; i < 100 && !done; i++) await clock.advance(100)
+  const text = await run
+  return { text, clockMs: clock.now() - c0, realMs: Date.now() - t0 }
 }
 
 test('/office starts the tracker when none answers', async ($, on) => {
@@ -237,4 +255,39 @@ test('the pane draws a placeholder on every surface', async ($, on) => {
     expect((await ui.find({ type: 'Text', text: /running/ }))?.text).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('/office answers with one line when the port never replies', async ($, on) => {
+  const w = world(on, { state: ['hang'] })
+  const { text, clockMs, realMs } = await officeOverTime($, w.clock)
+
+  expect(text.split('\n').length).toBe(1)
+  expect(text).toMatch(/didn't answer within 3 seconds/)
+  expect(w.runs.length).toBe(1)
+  expect(w.opened).toEqual([])
+  // first probe (0.5 s) + about 3 s of polling, each probe bounded to 0.5 s
+  expect(clockMs).toBeLessThanOrEqual(4500)
+  expect(realMs).toBeLessThan(5000)
+})
+
+test('/office stop answers when the tracker never replies to the shutdown', async ($, on) => {
+  on('http.fetch', { url: `http://127.0.0.1:${PORT}/shutdown` }, () => new Promise<never>(() => undefined))
+  const w = world(on, { state: [ours()] })
+  const { text } = await officeOverTime($, w.clock, 'stop')
+
+  expect(text).toBe('No office tracker is running.')
+})
+
+test('/office keeps an old tracker that will not stop for the update', async ($, on) => {
+  const w = world(on, { state: [ours({ version: '0.0.9' })] })
+  const { text, clockMs } = await officeOverTime($, w.clock)
+
+  expect(w.posts.length).toBe(1)
+  expect(w.runs.length).toBe(0)
+  expect(w.opened).toEqual(['agent-office'])
+  expect(text.split('\n')[0]).toBe(
+    "Couldn't restart the office tracker for the update; using the running one.",
+  )
+  expect(text).toContain(`/?token=${TOKEN}`)
+  expect(clockMs).toBeLessThanOrEqual(4500)
 })

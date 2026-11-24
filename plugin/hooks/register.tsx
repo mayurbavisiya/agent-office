@@ -14,11 +14,11 @@ type ProbeResult = { kind: Probe; info?: StateInfo }
 const PANE = 'agent-office'
 const TITLE = 'Agent Office'
 const APP = '/Applications/Agent Office.app'
-/** how long one GET /state may take before the port counts as down */
-const PROBE_MS = 1500
-/** after a launch or a shutdown: up to 12 polls 250 ms apart, about 3 s */
+/** how long one request to the tracker may take before it counts as unanswered */
+const PROBE_MS = 500
+/** the wait after a launch or a shutdown: polls POLL_MS apart until WAIT_MS have passed */
+const WAIT_MS = 3000
 const POLL_MS = 250
-const POLLS = 12
 
 const status = atom(
   { plugin: 'agent-office', key: 'status' } as const,
@@ -55,21 +55,30 @@ async function pluginVersion($: Engine): Promise<string | undefined> {
   }
 }
 
-/** Resolves after `ms`, or never when the clock is not available (so a race is decided by the other side). */
-function after($: Engine, ms: number): Promise<'timeout'> {
-  return new Promise(resolve => {
-    $.clock.sleep(ms).then(
-      () => resolve('timeout'),
-      () => undefined,
-    )
-  })
+const now = ($: Engine): Promise<number> => $.clock.now().catch(() => Date.now())
+
+/**
+ * Races `work` against a PROBE_MS timer. The timer's sleep is aborted once the race is decided, so
+ * it does not linger, and a clock that rejects counts as the timer running out.
+ */
+async function bounded<T>($: Engine, work: Promise<T>): Promise<T | 'timeout'> {
+  const stop = new AbortController()
+  const timer = $.clock.sleep(PROBE_MS, { signal: stop.signal }).then(
+    () => 'timeout' as const,
+    () => 'timeout' as const,
+  )
+  try {
+    return await Promise.race([work, timer])
+  } finally {
+    stop.abort()
+  }
 }
 
 async function probe($: Engine, cfg: OfficeConfig): Promise<ProbeResult> {
   const asked = $.http
     .fetch(`http://127.0.0.1:${cfg.port}/state`, { headers: { 'X-Agent-Office-Token': cfg.token } })
     .catch(() => 'refused' as const)
-  const got = await Promise.race([asked, after($, PROBE_MS)])
+  const got = await bounded($, asked)
   if (got === 'refused' || got === 'timeout') return { kind: 'down' }
   let json: unknown
   try {
@@ -81,9 +90,9 @@ async function probe($: Engine, cfg: OfficeConfig): Promise<ProbeResult> {
   return kind === 'ours' ? { kind, info: json as StateInfo } : { kind }
 }
 
-/** POST /shutdown; the HTTP status, or 0 when nothing answered. */
+/** POST /shutdown; the HTTP status, or 0 when nothing answered in time. */
 async function shutdown($: Engine, cfg: OfficeConfig): Promise<number> {
-  return $.http
+  const sent = $.http
     .fetch(`http://127.0.0.1:${cfg.port}/shutdown`, {
       method: 'POST',
       headers: { 'X-Agent-Office-Token': cfg.token },
@@ -92,22 +101,24 @@ async function shutdown($: Engine, cfg: OfficeConfig): Promise<number> {
       r => r.status,
       () => 0,
     )
+  const got = await bounded($, sent)
+  return got === 'timeout' ? 0 : got
 }
 
-/** Calls `check` until it answers, at most POLLS times, POLL_MS apart. */
+/** Calls `check` until it answers or WAIT_MS have passed, POLL_MS apart. */
 async function poll<T>($: Engine, check: () => Promise<T | undefined>): Promise<T | undefined> {
-  for (let i = 0; i < POLLS; i++) {
+  const end = (await now($)) + WAIT_MS
+  for (;;) {
     const v = await check().catch(() => undefined)
     if (v !== undefined) return v
-    if (i < POLLS - 1) {
-      const slept = await $.clock.sleep(POLL_MS).then(
-        () => true,
-        () => false,
-      )
-      if (!slept) break
-    }
+    const left = end - (await now($))
+    if (left <= 0) return undefined
+    const slept = await $.clock.sleep(Math.min(POLL_MS, left)).then(
+      () => true,
+      () => false,
+    )
+    if (!slept) return undefined
   }
-  return undefined
 }
 
 type Launch = 'ok' | 'no-node' | 'no-process' | { exitCode: number }
@@ -141,15 +152,17 @@ async function openOffice($: Engine): Promise<string> {
   if (found.kind === 'foreign' && cfg) return MESSAGES.foreignPort(cfg.port)
 
   // a tracker of an older (or newer) plugin: restart it, unless the app runs it
+  let note: string | undefined
   if (cfg && found.kind === 'ours' && found.info?.startedBy === 'plugin') {
     const want = await pluginVersion($)
     if (want !== undefined && found.info.version !== want) {
-      const sent = await shutdown($, cfg)
-      if (sent >= 200 && sent < 300) {
-        const live = cfg
-        await poll($, async () => ((await probe($, live)).kind === 'ours' ? undefined : true))
-        found = { kind: 'down' }
-      }
+      const live = cfg
+      const sent = await shutdown($, live)
+      const gone =
+        sent >= 200 && sent < 300 &&
+        (await poll($, async () => ((await probe($, live)).kind === 'ours' ? undefined : true))) === true
+      if (gone) found = { kind: 'down' }
+      else note = MESSAGES.restartFailed
     }
   }
 
@@ -177,7 +190,8 @@ async function openOffice($: Engine): Promise<string> {
 
   await setStatus($, `Tracker running on port ${cfg.port} (started by ${found.info?.startedBy ?? 'unknown'}).`)
   await $.ui.open({ id: PANE, title: TITLE }).catch(() => undefined)
-  return formatReply({ port: cfg.port, token: cfg.token, started, appInstalled })
+  const reply = formatReply({ port: cfg.port, token: cfg.token, started, appInstalled })
+  return note ? `${note}\n${reply}` : reply
 }
 
 async function stopOffice($: Engine): Promise<string> {

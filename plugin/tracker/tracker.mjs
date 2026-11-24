@@ -3786,21 +3786,43 @@ function salvagePort(text, parsed) {
   const n = m ? Number(m[1]) : NaN;
   return validPort(n) ? n : void 0;
 }
+function readValid(file) {
+  try {
+    const p = JSON.parse(readFileSync(file, "utf8"));
+    if (p && typeof p === "object" && validPort(p.port) && typeof p.token === "string" && p.token) return { port: p.port, token: p.token };
+  } catch {
+  }
+  return void 0;
+}
+function createConfigFile(dir2, cfg) {
+  const file = join(dir2, "config.json");
+  mkdirSync(dir2, { recursive: true, mode: 448 });
+  try {
+    writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n", { mode: 384, flag: "wx" });
+  } catch (err) {
+    if (err.code === "EEXIST") return readValid(file);
+    throw err;
+  }
+  chmodSync(file, 384);
+  return cfg;
+}
 function loadOrCreateConfig(dir2 = join(homedir(), ".agent-office")) {
   const file = join(dir2, "config.json");
   let port = DEFAULT_PORT;
-  if (existsSync(file)) {
-    let text = "";
-    let parsed;
-    try {
-      text = readFileSync(file, "utf8");
-      parsed = JSON.parse(text);
-    } catch {
-    }
-    const p = typeof parsed === "object" && parsed !== null ? parsed : void 0;
-    if (p && validPort(p.port) && typeof p.token === "string" && p.token) return { port: p.port, token: p.token };
-    port = salvagePort(text, parsed) ?? DEFAULT_PORT;
+  if (!existsSync(file)) {
+    const made = createConfigFile(dir2, { port, token: randomBytes(32).toString("hex") });
+    if (made) return made;
   }
+  let text = "";
+  let parsed;
+  try {
+    text = readFileSync(file, "utf8");
+    parsed = JSON.parse(text);
+  } catch {
+  }
+  const p = typeof parsed === "object" && parsed !== null ? parsed : void 0;
+  if (p && validPort(p.port) && typeof p.token === "string" && p.token) return { port: p.port, token: p.token };
+  port = salvagePort(text, parsed) ?? DEFAULT_PORT;
   const cfg = { port, token: randomBytes(32).toString("hex") };
   mkdirSync(dir2, { recursive: true, mode: 448 });
   writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n", { mode: 384 });
