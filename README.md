@@ -4,16 +4,21 @@ Agent Office shows every running Claude Code session as a room in a small pixel 
 
 ## Quick start
 
-1. Install the plugin. Type these inside Claude Code:
+1. Install the plugin. Type this inside Claude Code:
 
    ```
-   /plugin marketplace add <path-or-github>
-   /plugin install agent-office
+   /plugin install agent-office --marketplace mayurbavisiya/agent-office
    ```
 
-2. Type `/office`.
+   Type `y` to add the marketplace, then pick a scope. Or, from a shell:
 
-A panel opens beside the chat. You need Node 20 or newer on your PATH.
+   ```sh
+   claude plugin install agent-office --marketplace mayurbavisiya/agent-office
+   ```
+
+2. Restart Claude Code, then type `/office`.
+
+A panel opens beside the chat. You need Node 20 or newer on your PATH. Tested on macOS so far.
 
 ## What the panel shows
 
@@ -95,3 +100,7 @@ npm run demo        # fake sessions (see Demo mode)
 ```
 
 Set `AGENT_OFFICE_DEBUG=1` to log to stdout. Toolchain notes are in `docs/dev-notes.md`, and notes on Claude Code's hooks, logs and session registry are in `docs/hook-notes.md`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

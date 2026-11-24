@@ -57,7 +57,7 @@
 ## File Structure
 
 ```
-agent-buddies/
+agent-office/
   package.json  tsconfig.json  vitest.config.ts  .gitignore
   .claude-plugin/marketplace.json      # local marketplace → ./plugin
   plugin/
@@ -133,7 +133,7 @@ Settles the spec's "Unknowns to settle first". Everything after this depends on 
   
   Rename the outputs to `single-subagent.jsonl`, `parallel-subagents.jsonl`, `nested-subagent.jsonl` and `background-agent.jsonl`. Then copy the matching main and subagent logs from `<claudeDir>/projects/...` into `tests/fixtures/logs/`, replacing file contents and prompts with placeholder text.
   
-  If `--plugin-dir` isn't supported, install via `/plugin marketplace add /Users/mayurbavisia/agent-buddies` and record in an interactive session instead. Ask the person to run `/clear` and resume once in an interactive session, and capture `clear-resume.jsonl`.
+  If `--plugin-dir` isn't supported, install via `/plugin marketplace add <path-to-agent-office>` and record in an interactive session instead. Ask the person to run `/clear` and resume once in an interactive session, and capture `clear-resume.jsonl`.
 - [ ] **Step 6:** Write `docs/hook-notes.md`, answering each item listed under Produces with a quoted example line from the fixtures.
 - [ ] **Step 7:** Commit (`chore: scaffold + hook logging spike fixtures`).
 
@@ -476,7 +476,7 @@ This lets the scene be built and checked without live Claude sessions.
 **Files:**
 - Create: `README.md`
 
-- [ ] **Step 1:** Install the plugin from the local marketplace (`/plugin marketplace add /Users/mayurbavisia/agent-buddies`, then `/plugin install agent-office`) and start the app with `npm start`.
+- [ ] **Step 1:** Install the plugin from the local marketplace (`/plugin marketplace add <path-to-agent-office>`, then `/plugin install agent-office`) and start the app with `npm start`.
 - [ ] **Step 2:** In two real terminal sessions in different folders, run prompts that spawn parallel and nested subagents. Check against the spec:
   - one room per session
   - spawn, handoff and exit animations

@@ -1,6 +1,6 @@
 {
   "name": "agent-office",
-  "owner": { "name": "agent-office" },
+  "owner": { "name": "mayurbavisiya", "url": "https://github.com/mayurbavisiya" },
   "plugins": [
     { "name": "agent-office", "source": "./plugin", "description": "Visualize Claude Code agents as an animated office" }
   ]

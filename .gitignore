@@ -2,3 +2,5 @@ node_modules/
 dist/
 out/
 .superpowers/
+.idea/
+.DS_Store

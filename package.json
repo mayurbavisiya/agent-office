@@ -1,6 +1,12 @@
 {
   "name": "agent-office",
   "version": "0.1.0",
+  "description": "Watch your Claude Code agents work in a small pixel office",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mayurbavisiya/agent-office.git"
+  },
   "private": true,
   "type": "module",
   "scripts": {
