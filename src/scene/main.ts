@@ -3,7 +3,9 @@ import type { ServerMessage } from '../shared/types.js';
 import { Floor } from './floor.js';
 import { tickTimers } from './characters.js';
 import { InfoPanel } from './panel.js';
-import { tokText } from './rooms.js';
+import { setTok } from './tokTicker.js';
+import { hasUsage } from './panel.js';
+import { liveTokens } from './looks.js';
 import { workingCount } from '../shared/counts.js';
 import { bossLook, humanLook, looksFor, poseClass } from './looks.js';
 import { renderCharacter } from './characters.js';
@@ -99,12 +101,14 @@ function refreshTags(): void {
   const { sessions } = floor.state;
   for (const c of layer.querySelectorAll<SVGGElement>('g.char')) {
     const sess = sessions[c.dataset.sessionId ?? ''];
-    const stats = c.dataset.agentId === 'boss' ? sess?.boss.stats : sess?.agents[c.dataset.agentId ?? '']?.stats;
-    const tok = c.querySelector('.tok');
-    if (stats && tok) {
-      const t = tokText(stats);
-      if (tok.textContent !== t) tok.textContent = t;
-    }
+    const isBoss = c.dataset.agentId === 'boss';
+    const agent = isBoss ? undefined : sess?.agents[c.dataset.agentId ?? ''];
+    const stats = isBoss ? sess?.boss.stats : agent?.stats;
+    const tok = c.querySelector<SVGTextElement>('.tok');
+    if (stats && tok) setTok(tok, hasUsage(stats) ? liveTokens(stats) : undefined);
+    // "live": the bolt blinks while this agent is busy
+    const live = isBoss ? sess?.boss.status === 'working' || sess?.boss.status === 'delegating' : agent?.status === 'working' || agent?.status === 'spawning';
+    c.classList.toggle('live', !!live && sess?.status !== 'ended');
   }
 }
 

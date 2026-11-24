@@ -2,6 +2,7 @@
 // are ported from the approved human-characters mockup (option A, "Office people").
 // Browser-only, except the pure markup helpers (personMarkup, stateClasses) which are tested under node.
 // Text from state is always set via textContent, never interpolated into markup.
+import { writeTok } from './tokTicker.js';
 import type { Fx, HumanLook, Mood, Pose, PoseClass, Screen } from './looks.js';
 import { formatTimer } from './looks.js';
 import { HEAD_TOP } from './layout.js';
@@ -348,7 +349,7 @@ export function updateCharacter(g: SVGGElement, o: CharacterOpts): void {
   const t = o.task ?? '';
   if (task.textContent !== t) task.textContent = t;
   task.setAttribute('y', String(r1(a - 13)));
-  if (tok.textContent !== o.tokens) tok.textContent = o.tokens;
+  if (!tok.dataset.ticking) writeTok(tok, o.tokens); // main.ts counts it up between snapshots
   tok.setAttribute('y', String(r1(a - 4)));
 }
 

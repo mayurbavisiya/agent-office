@@ -90,6 +90,7 @@ export function applyDelta(stats: AgentStats, d: LogDelta): AgentStats {
       s.cacheWrite += d.usage.cacheWrite;
       if (d.messageId !== undefined) s.seenMessageIds = [...seen, d.messageId].slice(-MAX_SEEN);
     }
+    s.contextTokens = d.usage.input + d.usage.cacheRead + d.usage.cacheWrite + d.usage.output;
     const size = contextSize(s.model);
     s.contextFill = size ? (d.usage.input + d.usage.cacheRead + d.usage.cacheWrite) / size : undefined;
   }

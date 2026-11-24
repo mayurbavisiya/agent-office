@@ -1,8 +1,8 @@
 // Info panel: pure model + formatters (tested under node) and the DOM card. Browser-safe imports only.
 // Every untrusted string reaches the DOM through textContent, never innerHTML.
 import type { Agent, AgentStats, AgentStatus, BossStatus, OfficeState, Session } from '../shared/types.js';
-import { estimateCost } from '../core/pricing.js';
-import { looksFor } from './looks.js';
+import { contextSize, estimateCost } from '../core/pricing.js';
+import { liveTokens, looksFor } from './looks.js';
 import { roomTitle } from './layout.js';
 
 const DASH = '—';
@@ -48,6 +48,10 @@ export type PanelModel = {
   statusColor: string;
   model: string;
   tokens: { input: string; output: string; cacheRead: string; cacheWrite: string };
+  /** tokens in the agent's memory now (the headline number) */
+  memory: string;
+  /** e.g. "in memory now · of 1M" */
+  memoryLabel: string;
   duration: string;
   startedAt: string;
   cost: string;
@@ -98,6 +102,8 @@ export function panelModel(target: PanelTarget, now: number): PanelModel | null 
 
   const noUsage = !hasUsage(st);
   const tok = (n: number) => (noUsage ? DASH : formatTokens(n));
+  const size = contextSize(st.model);
+  const memoryLabel = size ? `in memory now · of ${formatTokens(size)}` : 'in memory now';
   const pct = typeof st.contextFill === 'number' && Number.isFinite(st.contextFill) ? Math.round(st.contextFill * 100) : undefined;
   const tools = Object.entries(st.tools)
     .map(([name, count]) => ({ name, count }))
@@ -118,6 +124,8 @@ export function panelModel(target: PanelTarget, now: number): PanelModel | null 
     statusColor,
     model: st.model ?? DASH,
     tokens: { input: tok(st.inputTokens), output: tok(st.outputTokens), cacheRead: tok(st.cacheRead), cacheWrite: tok(st.cacheWrite) },
+    memory: noUsage ? DASH : formatTokens(liveTokens(st)),
+    memoryLabel,
     duration: formatDuration((endedAt ?? now) - startedAt),
     startedAt: clock(startedAt),
     cost: noUsage ? DASH : formatCost(estimateCost(st)),
@@ -196,6 +204,7 @@ export class InfoPanel {
   private draw(m: PanelModel | null, left: boolean): void {
     const root = this.root;
     const scrolls = Array.from(root.querySelectorAll('.log')).map((e) => e.scrollTop);
+    const billingOpen = root.querySelector<HTMLDetailsElement>('details.billing')?.open ?? false;
     const top = root.scrollTop;
     root.replaceChildren();
 
@@ -228,17 +237,21 @@ export class InfoPanel {
       el('b', undefined, v, s);
       el('span', undefined, label, s);
     };
-    stat(m.tokens.input, 'input tokens');
-    stat(m.tokens.output, 'output tokens');
-    stat(m.tokens.cacheRead, 'cache read');
-    stat(m.tokens.cacheWrite, 'cache write');
+    stat(m.memory, m.memoryLabel);
+    stat(m.tokens.output, 'written by the agent');
     stat(m.duration, `running time · since ${m.startedAt}`);
     stat(m.cost, 'estimated cost');
 
-    el('h4', undefined, `Context window · ${m.contextLabel}`, root);
+    el('h4', undefined, `Memory used · ${m.contextLabel}`, root);
     const bar = el('div', 'bar', undefined, root);
     const fill = el('i', undefined, undefined, bar);
     fill.style.width = m.contextPct === undefined ? '0%' : `${Math.max(0, Math.min(100, m.contextPct))}%`;
+
+    const billing = el('details', 'billing', undefined, root);
+    billing.open = billingOpen;
+    el('summary', undefined, 'Billing details', billing);
+    el('div', 'bill-row', `input ${m.tokens.input} · output ${m.tokens.output} · cache read ${m.tokens.cacheRead} · cache write ${m.tokens.cacheWrite}`, billing);
+    el('div', 'bill-note', 'Totals for the whole run. Each step re-reads the conversation from the cache, so cache read grows much faster than memory.', billing);
 
     el('h4', undefined, `Tool calls (${m.toolTotal})`, root);
     const tools = el('div', 'tools', undefined, root);

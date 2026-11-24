@@ -105,6 +105,16 @@ describe('applyDelta', () => {
     expect(unknown.contextFill).toBeUndefined();
   });
 
+  it('contextTokens = input + cacheRead + cacheWrite + output of the latest call (drops after compaction)', () => {
+    let s = applyDelta(emptyStats(0), delta({ model: 'claude-opus-5-5', usage: usage(2, 380, 13404, 13017), messageId: 'a' }));
+    expect(s.contextTokens).toBe(2 + 380 + 13404 + 13017);
+    s = applyDelta(s, delta({ usage: usage(3, 120, 40_000, 900), messageId: 'b' }));
+    expect(s.contextTokens).toBe(41_023);
+    s = applyDelta(s, delta({ usage: usage(5, 50, 2000, 0), messageId: 'c' }));
+    expect(s.contextTokens).toBe(2055);
+    expect(s.cacheRead).toBe(13404 + 40_000 + 2000);
+  });
+
   it('dedupes usage across lines sharing message.id', () => {
     const ds = deltas(MAIN);
     const ids = ds.filter((d) => d.usage).map((d) => d.messageId);

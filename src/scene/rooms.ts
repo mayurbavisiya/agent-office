@@ -2,7 +2,7 @@
 // glass corner, desks) ported from the approved mockup. Browser-only.
 import type { Agent, AgentStats, Session } from '../shared/types.js';
 import { HEAD_TOP, roomLayout, SIGN_H, signText, TAG_H, type Rect, type RoomLayout } from './layout.js';
-import { agentLook, bossLook, humanLook, looksFor, poseClass, totalTokens, truncate } from './looks.js';
+import { agentLook, bossLook, humanLook, looksFor, poseClass, liveTokens, truncate } from './looks.js';
 import { formatTokens, hasUsage } from './panel.js';
 import { renderChair, renderCharacter, renderDesk, setDeskScreen, svgEl, updateCharacter, type CharacterOpts } from './characters.js';
 
@@ -18,7 +18,7 @@ function html(g: Element, s: string): void {
   g.insertAdjacentHTML('beforeend', s);
 }
 
-export const tokText = (st: AgentStats) => `⚡ ${hasUsage(st) ? formatTokens(totalTokens(st)) : '—'} tok`;
+export const tokText = (st: AgentStats) => `⚡ ${hasUsage(st) ? formatTokens(liveTokens(st)) : '—'} tok`;
 
 /** Builds a room group for a session and draws it into rect (floor coordinates). */
 export function renderRoom(session: Session, rect: Rect): SVGGElement {

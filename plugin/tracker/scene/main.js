@@ -80,8 +80,8 @@ function truncate(text, max) {
   if (t.length <= max) return t;
   return t.slice(0, Math.max(0, max - 1)).trimEnd() + "\u2026";
 }
-function totalTokens(s) {
-  return s.inputTokens + s.outputTokens + s.cacheWrite;
+function liveTokens(s) {
+  return typeof s.contextTokens === "number" && Number.isFinite(s.contextTokens) ? s.contextTokens : void 0;
 }
 function formatTimer(ms) {
   const s = Math.max(0, Math.floor(ms / 1e3));
@@ -305,6 +305,9 @@ var MODELS = {
   "claude-haiku-5-5": { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.2, contextSize: 1e6 }
 };
 var lookup = (model) => model !== void 0 && Object.prototype.hasOwnProperty.call(MODELS, model) ? MODELS[model] : void 0;
+function contextSize(model) {
+  return lookup(model)?.contextSize;
+}
 function estimateCost(stats) {
   const m = lookup(stats.model);
   if (!m) return null;
@@ -369,6 +372,8 @@ function panelModel(target, now) {
   }
   const noUsage = !hasUsage(st);
   const tok = (n) => noUsage ? DASH : formatTokens(n);
+  const size = contextSize(st.model);
+  const memoryLabel = size ? `in memory now \xB7 of ${formatTokens(size)}` : "in memory now";
   const pct = typeof st.contextFill === "number" && Number.isFinite(st.contextFill) ? Math.round(st.contextFill * 100) : void 0;
   const tools = Object.entries(st.tools).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : 1));
   const type = isBoss ? "main" : agent.type;
@@ -385,6 +390,8 @@ function panelModel(target, now) {
     statusColor,
     model: st.model ?? DASH,
     tokens: { input: tok(st.inputTokens), output: tok(st.outputTokens), cacheRead: tok(st.cacheRead), cacheWrite: tok(st.cacheWrite) },
+    memory: noUsage ? DASH : formatTokens(liveTokens(st)),
+    memoryLabel,
     duration: formatDuration((endedAt ?? now) - startedAt),
     startedAt: clock(startedAt),
     cost: noUsage ? DASH : formatCost(estimateCost(st)),
@@ -453,6 +460,7 @@ var InfoPanel = class {
   draw(m, left) {
     const root = this.root;
     const scrolls = Array.from(root.querySelectorAll(".log")).map((e) => e.scrollTop);
+    const billingOpen = root.querySelector("details.billing")?.open ?? false;
     const top = root.scrollTop;
     root.replaceChildren();
     const close = el("button", "p-close", "\xD7", root);
@@ -481,16 +489,19 @@ var InfoPanel = class {
       el("b", void 0, v, s);
       el("span", void 0, label, s);
     };
-    stat(m.tokens.input, "input tokens");
-    stat(m.tokens.output, "output tokens");
-    stat(m.tokens.cacheRead, "cache read");
-    stat(m.tokens.cacheWrite, "cache write");
+    stat(m.memory, m.memoryLabel);
+    stat(m.tokens.output, "written by the agent");
     stat(m.duration, `running time \xB7 since ${m.startedAt}`);
     stat(m.cost, "estimated cost");
-    el("h4", void 0, `Context window \xB7 ${m.contextLabel}`, root);
+    el("h4", void 0, `Memory used \xB7 ${m.contextLabel}`, root);
     const bar = el("div", "bar", void 0, root);
     const fill = el("i", void 0, void 0, bar);
     fill.style.width = m.contextPct === void 0 ? "0%" : `${Math.max(0, Math.min(100, m.contextPct))}%`;
+    const billing = el("details", "billing", void 0, root);
+    billing.open = billingOpen;
+    el("summary", void 0, "Billing details", billing);
+    el("div", "bill-row", `input ${m.tokens.input} \xB7 output ${m.tokens.output} \xB7 cache read ${m.tokens.cacheRead} \xB7 cache write ${m.tokens.cacheWrite}`, billing);
+    el("div", "bill-note", "Totals for the whole run. Each step re-reads the conversation from the cache, so cache read grows much faster than memory.", billing);
     el("h4", void 0, `Tool calls (${m.toolTotal})`, root);
     const tools = el("div", "tools", void 0, root);
     if (!m.tools.length) el("span", void 0, DASH, tools);
@@ -513,6 +524,73 @@ var InfoPanel = class {
     });
   }
 };
+
+// src/scene/tokTicker.ts
+var TICK_MS = 900;
+var SVGNS = "http://www.w3.org/2000/svg";
+function tickValue(from, to, elapsed, dur = TICK_MS) {
+  if (elapsed >= dur || dur <= 0) return to;
+  const t = Math.max(0, elapsed) / dur;
+  return Math.round(from + (to - from) * (1 - Math.pow(1 - t, 3)));
+}
+var tokLabel = (n) => `\u26A1 ${n === void 0 ? "\u2014" : formatTokens(n)} tok`;
+function writeTok(el2, text) {
+  let bolt = el2.querySelector("tspan.bolt");
+  let val = el2.querySelector("tspan.val");
+  if (!bolt || !val) {
+    el2.textContent = "";
+    bolt = document.createElementNS(SVGNS, "tspan");
+    bolt.setAttribute("class", "bolt");
+    val = document.createElementNS(SVGNS, "tspan");
+    val.setAttribute("class", "val");
+    el2.append(bolt, val);
+  }
+  const i = text.indexOf(" ");
+  const b = i < 0 ? "" : text.slice(0, i);
+  const v = i < 0 ? text : text.slice(i);
+  if (bolt.textContent !== b) bolt.textContent = b;
+  if (val.textContent !== v) val.textContent = v;
+}
+var ticks = /* @__PURE__ */ new WeakMap();
+var reduced = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+function setTok(el2, target) {
+  const cur = ticks.get(el2);
+  if (target === void 0) {
+    if (cur?.raf) cancelAnimationFrame(cur.raf);
+    ticks.delete(el2);
+    delete el2.dataset.ticking;
+    writeTok(el2, tokLabel(void 0));
+    return;
+  }
+  if (cur && cur.target === target) return;
+  if (!cur || reduced() || typeof requestAnimationFrame !== "function") {
+    if (cur?.raf) cancelAnimationFrame(cur.raf);
+    ticks.set(el2, { shown: target, target, from: target, start: 0 });
+    delete el2.dataset.ticking;
+    writeTok(el2, tokLabel(target));
+    return;
+  }
+  if (cur.raf) cancelAnimationFrame(cur.raf);
+  const t = { shown: cur.shown, target, from: cur.shown, start: performance.now() };
+  ticks.set(el2, t);
+  el2.dataset.ticking = "1";
+  el2.classList.remove("bump");
+  void el2.getBoundingClientRect();
+  el2.classList.add("bump");
+  const step = (now) => {
+    if (ticks.get(el2) !== t) return;
+    t.shown = tickValue(t.from, t.target, now - t.start);
+    writeTok(el2, tokLabel(t.shown));
+    if (t.shown === t.target) {
+      t.raf = void 0;
+      delete el2.dataset.ticking;
+      el2.classList.remove("bump");
+      return;
+    }
+    t.raf = requestAnimationFrame(step);
+  };
+  t.raf = requestAnimationFrame(step);
+}
 
 // src/scene/characters.ts
 var NS = "http://www.w3.org/2000/svg";
@@ -743,7 +821,7 @@ function updateCharacter(g, o) {
   const t = o.task ?? "";
   if (task.textContent !== t) task.textContent = t;
   task.setAttribute("y", String(r1(a - 13)));
-  if (tok.textContent !== o.tokens) tok.textContent = o.tokens;
+  if (!tok.dataset.ticking) writeTok(tok, o.tokens);
   tok.setAttribute("y", String(r1(a - 4)));
 }
 function paintTimer(t, now) {
@@ -829,7 +907,7 @@ function layoutOf(room) {
 function html2(g, s) {
   g.insertAdjacentHTML("beforeend", s);
 }
-var tokText = (st) => `\u26A1 ${hasUsage(st) ? formatTokens(totalTokens(st)) : "\u2014"} tok`;
+var tokText = (st) => `\u26A1 ${hasUsage(st) ? formatTokens(liveTokens(st)) : "\u2014"} tok`;
 function renderRoom(session, rect) {
   const g = svgEl("g", { class: "room" });
   const clipId = `room-clip-${++clipSeq}`;
@@ -1225,7 +1303,7 @@ var animStats = {
   log: []
 };
 var qkey = (sessionId, agentId) => `${sessionId}\0${agentId}`;
-var reduced = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+var reduced2 = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 var tr = (p) => `translate(${Math.round(p.x)}px, ${Math.round(p.y)}px)`;
 function roomEl(svg2, sid) {
   return svg2.querySelector(`g.room[data-session-id="${CSS.escape(sid)}"]`);
@@ -1454,7 +1532,7 @@ function confetti(room, at) {
   setTimeout(() => g.remove(), 2500);
 }
 async function play(step, svg2, q) {
-  const ctx = { q, reduced: reduced() };
+  const ctx = { q, reduced: reduced2() };
   const room = roomEl(svg2, step.sessionId);
   if (!room) return false;
   const layout = layoutOf(room);
@@ -1674,12 +1752,13 @@ function refreshTags() {
   const { sessions } = floor.state;
   for (const c of layer.querySelectorAll("g.char")) {
     const sess = sessions[c.dataset.sessionId ?? ""];
-    const stats = c.dataset.agentId === "boss" ? sess?.boss.stats : sess?.agents[c.dataset.agentId ?? ""]?.stats;
+    const isBoss = c.dataset.agentId === "boss";
+    const agent = isBoss ? void 0 : sess?.agents[c.dataset.agentId ?? ""];
+    const stats = isBoss ? sess?.boss.stats : agent?.stats;
     const tok = c.querySelector(".tok");
-    if (stats && tok) {
-      const t = tokText(stats);
-      if (tok.textContent !== t) tok.textContent = t;
-    }
+    if (stats && tok) setTok(tok, hasUsage(stats) ? liveTokens(stats) : void 0);
+    const live = isBoss ? sess?.boss.status === "working" || sess?.boss.status === "delegating" : agent?.status === "working" || agent?.status === "spawning";
+    c.classList.toggle("live", !!live && sess?.status !== "ended");
   }
 }
 var stripSig = "";

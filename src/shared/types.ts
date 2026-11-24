@@ -52,6 +52,8 @@ export type AgentStats = {
   cacheWrite: number;
   /** 0..1 */
   contextFill?: number;
+  /** Tokens in the agent's context after its latest API call (input + cache read + cache write + output of that call), as Claude Code reports a subagent's total. Drops after /compact. */
+  contextTokens?: number;
   tools: Record<string, number>;
   files: string[];
   /** max 20 */

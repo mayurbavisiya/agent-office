@@ -113,8 +113,9 @@ export function truncate(text: string | undefined, max: number): string {
   return t.slice(0, Math.max(0, max - 1)).trimEnd() + '…';
 }
 
-export function totalTokens(s: AgentStats): number {
-  return s.inputTokens + s.outputTokens + s.cacheWrite;
+/** Tokens in the agent's memory right now (the headline number), or undefined before its first API call. */
+export function liveTokens(s: AgentStats): number | undefined {
+  return typeof s.contextTokens === 'number' && Number.isFinite(s.contextTokens) ? s.contextTokens : undefined;
 }
 
 /** "m:ss" for a duration in ms. */

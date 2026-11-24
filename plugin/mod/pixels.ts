@@ -14,6 +14,8 @@ export type PxStats = {
   outputTokens: number;
   cacheRead: number;
   cacheWrite: number;
+  /** tokens in the agent's memory after its latest step (see src/shared/types.ts) */
+  contextTokens?: number;
   lastActivity: number;
 };
 export type PxAgent = {
@@ -141,7 +143,8 @@ export function formatDuration(ms: number): string {
   if (s >= 60) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
   return `${s}s`;
 }
-const total = (s: PxStats) => s.inputTokens + s.outputTokens + s.cacheWrite;
+/** tokens in memory now; undefined before the agent's first step */
+const live = (s: PxStats) => s.contextTokens;
 
 const BOSS_WORDS: Record<BossStatus, string> = {
   working: 'working',
@@ -177,6 +180,7 @@ function parseStats(v: unknown): PxStats {
   };
   const model = str(s.model);
   if (model !== undefined) out.model = model;
+  if (typeof s.contextTokens === 'number' && Number.isFinite(s.contextTokens)) out.contextTokens = s.contextTokens;
   return out;
 }
 
@@ -286,13 +290,14 @@ const roomLabel = (s: PxSession) => s.name || s.label;
 
 function roomModel(s: PxSession): Omit<RoomModel, 'x' | 'y' | 'w' | 'h'> {
   const helpers = liveHelpers(s);
-  const tokens = helpers.reduce((n, a) => n + total(a.stats), total(s.boss.stats));
+  const counts = [s.boss.stats, ...helpers.map(a => a.stats)].map(live).filter((n): n is number => n !== undefined);
+  const tokens = counts.length ? formatTokens(counts.reduce((a, b) => a + b, 0)) : DASH;
   return {
     sessionId: s.id,
     label: roomLabel(s),
     boss: s.boss.status,
     helpers: helpers.map(a => ({ agentId: a.id, label: a.name || a.type, color: colorFor(a.type), status: a.status })),
-    status: `${BOSS_WORDS[s.boss.status]} · ${helpers.length} helper${helpers.length === 1 ? '' : 's'} · ${formatTokens(tokens)} tokens`,
+    status: `${BOSS_WORDS[s.boss.status]} · ${helpers.length} helper${helpers.length === 1 ? '' : 's'} · ${tokens} tokens in memory`,
   };
 }
 
@@ -672,8 +677,12 @@ export type Details = { title: string; lines: string[] };
 export function detailsFor(state: PxState, sel: { sessionId: string; agentId: string }, now: number): Details | null {
   const s = state.sessions[sel.sessionId];
   if (!s) return null;
-  const tokens = (st: PxStats) =>
-    `tokens: in ${formatTokens(st.inputTokens)} · out ${formatTokens(st.outputTokens)} · cache ${formatTokens(st.cacheRead + st.cacheWrite)}`;
+  const tokens = (st: PxStats) => {
+    const m = live(st);
+    return `memory now: ${m === undefined ? DASH : formatTokens(m)} tokens · written: ${formatTokens(st.outputTokens)}`;
+  };
+  const billing = (st: PxStats) =>
+    `billing totals: in ${formatTokens(st.inputTokens)} · out ${formatTokens(st.outputTokens)} · cache ${formatTokens(st.cacheRead + st.cacheWrite)}`;
   const cost = (st: PxStats) => {
     const c = estimateCost(st);
     return c === null ? `cost: ${DASH} (unknown model)` : `cost: ~$${c.toFixed(3)} (estimate)`;
@@ -687,6 +696,7 @@ export function detailsFor(state: PxState, sel: { sessionId: string; agentId: st
         'type: main agent',
         `status: ${BOSS_WORDS[s.boss.status]}`,
         tokens(st),
+        billing(st),
         cost(st),
         running(s.boss.startedAt, now),
         last(st),
@@ -703,6 +713,7 @@ export function detailsFor(state: PxState, sel: { sessionId: string; agentId: st
       `task: ${a.task ?? DASH}`,
       `status: ${AGENT_WORDS[a.status]}`,
       tokens(st),
+      billing(st),
       cost(st),
       running(a.startedAt, a.endedAt ?? now),
       last(st),

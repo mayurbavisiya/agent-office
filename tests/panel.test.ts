@@ -56,6 +56,17 @@ describe('panelModel', () => {
     expect(m.cost).toBe('~$0.000');
   });
 
+  it('headlines the tokens in memory now, against the model\'s window', () => {
+    const a = agent('a', { stats: stats({ model: 'claude-opus-5-5', inputTokens: 62, outputTokens: 25_900, cacheRead: 3_540_000, cacheWrite: 178_600, contextTokens: 181_234 }) });
+    const m = panelModel({ session: session([a]), agentId: 'a' }, 5000)!;
+    expect(m.memory).toBe('181.2k');
+    expect(m.memoryLabel).toBe('in memory now · of 1M');
+    expect(m.tokens.cacheRead).toBe('3.54M');
+    const none = panelModel({ session: session([agent('b')]), agentId: 'b' }, 5000)!;
+    expect(none.memory).toBe('—');
+    expect(none.memoryLabel).toBe('in memory now');
+  });
+
   it('boss team counts the Agent tool calls when finished subagents are not in the store', () => {
     const s = session([agent('a'), agent('b', { status: 'quiet' })], { stats: stats({ tools: { Agent: 34 } }) });
     expect(panelModel({ session: s, agentId: 'boss' }, 5000)!.team).toEqual({ spawned: 34, done: 32, stuck: 1 });

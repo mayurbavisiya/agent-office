@@ -153,11 +153,18 @@ describe('layoutPanel', () => {
     expect(m.rooms.map(r => r.label)).toEqual(['my session', 'folder-s0']);
   });
   it('builds the status line from boss state, helpers and tokens', () => {
-    const st = { sessions: { s: session('s', {}, [agent('s', 'a', 'Explore', 'working', { stats: stats({ inputTokens: 1500 }) })], 'needs_you') } };
+    const st = { sessions: { s: session('s', {}, [agent('s', 'a', 'Explore', 'working', { stats: stats({ inputTokens: 1500, contextTokens: 1500 }) })], 'needs_you') } };
     st.sessions.s.boss.stats.outputTokens = 500;
+    st.sessions.s.boss.stats.contextTokens = 500;
     const m = layoutPanel(st, 40, 40);
     if (m.mode !== 'rooms') throw new Error(m.mode);
-    expect(m.rooms[0]!.status).toBe('needs you · 1 helper · 2.0k tokens');
+    expect(m.rooms[0]!.status).toBe('needs you · 1 helper · 2.0k tokens in memory');
+  });
+  it('shows "—" tokens before any agent has finished a step', () => {
+    const st = { sessions: { s: session('s', {}, [], 'working') } };
+    const m = layoutPanel(st, 40, 40);
+    if (m.mode !== 'rooms') throw new Error(m.mode);
+    expect(m.rooms[0]!.status).toBe('working · 0 helpers · — tokens in memory');
   });
   it('leaves gone helpers out and colours helpers by type', () => {
     const st = { sessions: { s: session('s', {}, [agent('s', 'a', 'Plan'), agent('s', 'b', 'Explore', 'gone')]) } };
@@ -277,7 +284,7 @@ describe('detailsFor', () => {
           agent('s', 'a1', 'Explore', 'working', {
             task: 'find the bug',
             startedAt: 10_000,
-            stats: stats({ model: 'claude-opus-5-5', inputTokens: 1000, outputTokens: 2000, cacheRead: 3000, cacheWrite: 4000, lastActivity: 60_000 }),
+            stats: stats({ model: 'claude-opus-5-5', inputTokens: 1000, outputTokens: 2000, cacheRead: 3000, cacheWrite: 4000, contextTokens: 9500, lastActivity: 60_000 }),
           }),
         ]),
       },
@@ -288,6 +295,7 @@ describe('detailsFor', () => {
     expect(d!.title).toContain('Explore');
     expect(text).toContain('find the bug');
     expect(text).toContain('working');
+    expect(text).toContain('memory now: 9.5k tokens · written: 2.0k');
     expect(text).toContain('in 1.0k');
     expect(text).toContain('out 2.0k');
     expect(text).toContain('cache 7.0k');

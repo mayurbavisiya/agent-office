@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { looksFor, agentLook, bossLook, truncate, totalTokens, formatTimer, humanLook, poseClass } from '../src/scene/looks.js';
+import { looksFor, agentLook, bossLook, truncate, liveTokens, formatTimer, humanLook, poseClass } from '../src/scene/looks.js';
 import { formatTokens } from '../src/scene/panel.js';
 import type { AgentStats } from '../src/shared/types.js';
 
@@ -96,8 +96,9 @@ describe('text helpers', () => {
     expect(truncate('  multi\n line  ', 28)).toBe('multi line');
   });
 
-  it('totals input + output + cacheWrite, not cacheRead', () => {
-    expect(totalTokens(stats({ inputTokens: 100, outputTokens: 20, cacheWrite: 5, cacheRead: 9999 }))).toBe(125);
+  it('headline tokens are what is in memory now, not the billed totals', () => {
+    expect(liveTokens(stats({ inputTokens: 100, outputTokens: 20, cacheWrite: 5, cacheRead: 9999, contextTokens: 4321 }))).toBe(4321);
+    expect(liveTokens(stats({ inputTokens: 100 }))).toBeUndefined();
   });
 
   it('formats tokens simply', () => {

@@ -129,6 +129,12 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 @keyframes rig-wave-bust { 0%, 100% { transform: rotate(-160deg) } 50% { transform: rotate(-145deg) } }
 .char.bust.pose-wave:not(.walking) .arm.front { transform: rotate(-155deg); animation: rig-wave-bust .5s infinite ease-in-out; }
 
+/* token counter: the bolt blinks while the agent works; a short pulse when a new number lands */
+@keyframes tok-live { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
+.char.live .tok .bolt { animation: tok-live 1.2s ease-in-out infinite; fill: #d97706; }
+@keyframes tok-bump { 0% { fill: #334155 } 25% { fill: #059669 } 100% { fill: #334155 } }
+.tok.bump .val { animation: tok-bump .9s ease-out; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -158,3 +164,9 @@ html.compact #empty { top: 18px; }
 .chip-room .cr-name { font-weight: 700; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip-room .cr-counts { font-size: 11px; color: #cbd5e1; }
 .chip-room .cr-need { color: #fbbf24; font-weight: 700; }
+
+/* billing details (collapsed by default) */
+details.billing { margin: 8px 0 2px; font-size: 11px; color: #555; }
+details.billing summary { cursor: pointer; font-weight: 600; color: #777; }
+details.billing .bill-row { margin-top: 4px; }
+details.billing .bill-note { margin-top: 3px; color: #888; }
