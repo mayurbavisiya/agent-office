@@ -36,3 +36,14 @@ Taken by the build controller on the person's behalf; each line ends with what i
 - Ruling (parked): two sessions in one cwd + plugin + Start(clear) before End(clear) → new room instead of shift change (no room stolen) — safe failure; fix = retroactive merge on End(clear)/rescan — cost: a cleared room jumps to floor end in that rare case
 - Ruling (parked): M1 client connecting inside the 50 ms window may replay animations — cosmetic, rare — cost: one duplicate walk-in on (re)connect
 - Ruling (parked): registrySeen needs a live entry; dir-vanishes-before-any-live-session edge falls back to mtime — very rare — cost: recently exited sessions shown briefly
+
+## Office plugin (plan 2026-11-24-office-plugin) — rulings
+- /office stop uses POST /shutdown, honoured only for plugin-started trackers (409 otherwise). If wrong: stop needs another mechanism.
+- Version restart only for plugin-started trackers. If wrong: an app tracker stays on an old version until the app restarts.
+- "Desktop app installed" = /Applications/Agent Office.app exists. If wrong: the "open the app instead" line shows/hides wrongly.
+- Fixed Task 2 review minors early (bounded waits, restart fallback, wx config create). If wrong: slightly more change before the panel.
+- Panel frame state in module variables; snapshot/selection/reachability in atoms; timers start only when the panel opens. If wrong: small refactor.
+- Task 4 re-review done by the controller (4-line README wording fix, checked by grep). If wrong: a wording slip in the README.
+- One fix wave for all final-review findings. If wrong: more change before the live test.
+- Left as "can wait": panel recovery after 30 s hidden relies on a redraw; a stale selection can return; pixels.ts is 709 lines; an untracked first poll timer; rare first-run config race with a half-written file; the launcher-failure message on non-terminal surfaces. If wrong: cosmetic glitches.
+- Incident: a builder's demo run sent ~3 s of fake events to the live app on 47821 (demo ignored AGENT_OFFICE_DIR). Fixed in tools/demo.ts.
