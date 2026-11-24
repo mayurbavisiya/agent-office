@@ -1,17 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { looksFor, agentLook, bossLook, truncate, totalTokens, formatTimer } from '../src/scene/looks.js';
+import { looksFor, agentLook, bossLook, truncate, totalTokens, formatTimer, humanLook, poseClass } from '../src/scene/looks.js';
 import { formatTokens } from '../src/scene/panel.js';
 import type { AgentStats } from '../src/shared/types.js';
 
 const stats = (o: Partial<AgentStats> = {}): AgentStats => ({ inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, tools: {}, files: [], recent: [], lastActivity: 0, ...o });
 
 describe('looksFor', () => {
-  it('gives known types their fixed accessory', () => {
-    expect(looksFor('Explore').accessory).toBe('headphones');
-    expect(looksFor('Plan').accessory).toBe('notepad');
-    expect(looksFor('code-reviewer').accessory).toBe('glasses');
-    expect(looksFor('main').accessory).toBe('crown');
-    expect(looksFor('general-purpose').accessory).toBe('hat');
+  it('gives known types their fixed colour', () => {
+    expect(looksFor('Explore').color).toBe('#10b981');
+    expect(looksFor('Plan').color).toBe('#3b82f6');
+    expect(looksFor('code-reviewer').color).toBe('#f97316');
+    expect(looksFor('general-purpose').color).toBe('#ec4899');
   });
 
   it('is stable per type', () => {
@@ -19,13 +18,53 @@ describe('looksFor', () => {
     expect(looksFor('my-custom-agent')).toEqual(looksFor('my-custom-agent'));
   });
 
-  it('gives unknown types a hashed hex color and no accessory', () => {
+  it('gives unknown types a hashed hex color', () => {
     const a = looksFor('my-custom-agent');
     const b = looksFor('another-agent');
-    expect(a.accessory).toBe('none');
     expect(a.color).toMatch(/^#[0-9a-f]{6}$/);
     expect(b.color).toMatch(/^#[0-9a-f]{6}$/);
     expect(a.color).not.toBe(b.color);
+  });
+});
+
+describe('humanLook', () => {
+  it('is stable per id and varies across ids', () => {
+    expect(humanLook('a1', 'Explore')).toEqual(humanLook('a1', 'Explore'));
+    const looks = Array.from({ length: 20 }, (_, i) => humanLook(`agent-${i}`, 'Explore'));
+    expect(new Set(looks.map((l) => l.skin)).size).toBeGreaterThanOrEqual(3);
+    expect(new Set(looks.map((l) => l.hairStyle)).size).toBeGreaterThanOrEqual(3);
+    for (const l of looks) {
+      expect(['short', 'long', 'bun', 'bald', 'curly']).toContain(l.hairStyle);
+      for (const c of [l.skin, l.hair, l.shirt, l.pants]) expect(c).toMatch(/^#[0-9a-f]{6}$/);
+      expect(l.tie).toBeUndefined();
+    }
+  });
+
+  it('uses the agent-type colour for the shirt', () => {
+    expect(humanLook('a1', 'Explore').shirt).toBe(looksFor('Explore').color);
+    expect(humanLook('a1', 'my-custom-agent').shirt).toBe(looksFor('my-custom-agent').color);
+  });
+
+  it('boss wears a suit and tie', () => {
+    expect(humanLook('boss', 'boss')).toMatchObject({ shirt: '#3d3a5c', tie: '#d9455f' });
+    expect(humanLook('some-session-id', 'boss')).toMatchObject({ shirt: '#3d3a5c', tie: '#d9455f' });
+  });
+});
+
+describe('poseClass', () => {
+  it('maps statuses to pose classes', () => {
+    expect(poseClass(agentLook('working'), false)).toBe('pose-type');
+    expect(poseClass(agentLook('quiet'), false)).toBe('pose-slump');
+    expect(poseClass(bossLook('working'), true)).toBe('pose-type');
+    expect(poseClass(bossLook('delegating'), true)).toBe('pose-type');
+    expect(poseClass(bossLook('needs_you'), true)).toBe('pose-wave');
+    expect(poseClass(bossLook('waiting_on_team'), true)).toBe('pose-lean');
+    expect(poseClass(bossLook('idle'), true)).toBe('pose-idle');
+  });
+
+  it('keeps the status overlays that go with the poses', () => {
+    expect(agentLook('quiet').fx).toBe('stuck');
+    expect(bossLook('idle').fx).toBe('zzz');
   });
 });
 

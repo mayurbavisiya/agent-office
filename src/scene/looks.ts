@@ -1,23 +1,22 @@
 // Pure, DOM-free look/mapping helpers for the office scene (tested under node).
 import type { AgentStats, AgentStatus, BossStatus } from '../shared/types.js';
 
-export type Accessory = 'crown' | 'headphones' | 'glasses' | 'notepad' | 'hat' | 'none';
 export type Mood = 'happy' | 'focus' | 'worried' | 'sleepy';
 export type Pose = 'type' | 'scratch' | 'carry' | 'wave' | 'walk' | 'raise_hand' | 'stand';
 export type Screen = 'code' | 'err';
 /** Status overlays drawn around a character. */
 export type Fx = 'none' | 'stuck' | 'zzz' | 'alert' | 'tap';
 
-export type Look = { color: string; accessory: Accessory };
+export type Look = { color: string };
 export type StatusLook = { pose: Pose; mood: Mood; screen: Screen; fx: Fx; dim: boolean };
 
 /** Fixed looks, colors taken from the approved mockup. */
 const KNOWN: Record<string, Look> = {
-  main: { color: '#8b5cf6', accessory: 'crown' },
-  explore: { color: '#10b981', accessory: 'headphones' },
-  plan: { color: '#3b82f6', accessory: 'notepad' },
-  'code-reviewer': { color: '#f97316', accessory: 'glasses' },
-  'general-purpose': { color: '#ec4899', accessory: 'hat' },
+  main: { color: '#8b5cf6' },
+  explore: { color: '#10b981' },
+  plan: { color: '#3b82f6' },
+  'code-reviewer': { color: '#f97316' },
+  'general-purpose': { color: '#ec4899' },
 };
 
 /** FNV-1a 32-bit. */
@@ -43,7 +42,39 @@ function hslToHex(h: number, s: number, l: number): string {
 export function looksFor(type: string): Look {
   const known = KNOWN[type] ?? KNOWN[type.toLowerCase()];
   if (known) return { ...known };
-  return { color: hslToHex(hash(type) % 360, 0.62, 0.55), accessory: 'none' };
+  return { color: hslToHex(hash(type) % 360, 0.62, 0.55) };
+}
+
+export type HairStyle = 'short' | 'long' | 'bun' | 'bald' | 'curly';
+export type HumanLook = { skin: string; hair: string; hairStyle: HairStyle; shirt: string; pants: string; tie?: string };
+export type PoseClass = 'pose-type' | 'pose-slump' | 'pose-wave' | 'pose-lean' | 'pose-idle';
+
+const SKINS = ['#f6d3b3', '#eab38c', '#d39a6a', '#b07247', '#8a5332', '#5e3a22'];
+const HAIRS = ['#1f1a17', '#3b2a20', '#6b3e26', '#a0522d', '#d6a75c', '#8f8f99'];
+const HAIR_STYLES: HairStyle[] = ['short', 'long', 'bun', 'bald', 'curly'];
+const PANTS = ['#4a4766', '#2f3b52', '#5a4a3a', '#3f3f46'];
+const pick = <T>(list: T[], h: number): T => list[h % list.length]!;
+
+/**
+ * A flat-vector office person for a character id: skin, hair and trousers come from a stable hash
+ * of the id; the shirt is the agent-type colour. The boss ('boss' type) wears a dark suit and a tie.
+ */
+export function humanLook(id: string, type: string | 'boss'): HumanLook {
+  const h = hash(id);
+  const skin = pick(SKINS, h);
+  const hair = pick(HAIRS, hash('hair:' + id));
+  const hairStyle = pick(HAIR_STYLES, hash('style:' + id));
+  if (type === 'boss') return { skin, hair, hairStyle, shirt: '#3d3a5c', pants: '#2e2b45', tie: '#d9455f' };
+  return { skin, hair, hairStyle, shirt: looksFor(type).color, pants: pick(PANTS, hash('pants:' + id)) };
+}
+
+/** The rig pose for a status look (see agentLook / bossLook). */
+export function poseClass(look: StatusLook, isBoss: boolean): PoseClass {
+  if (look.pose === 'type') return 'pose-type';
+  if (look.fx === 'stuck') return 'pose-slump';
+  if (isBoss && look.pose === 'raise_hand') return 'pose-wave';
+  if (isBoss && look.fx === 'tap') return 'pose-lean';
+  return 'pose-idle';
 }
 
 export function agentLook(status: AgentStatus): StatusLook {

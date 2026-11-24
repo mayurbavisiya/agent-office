@@ -2,9 +2,9 @@
 // glass corner, desks) ported from the approved mockup. Browser-only.
 import type { Agent, AgentStats, Session } from '../shared/types.js';
 import { HEAD_TOP, roomLayout, SIGN_H, signText, TAG_H, type Rect, type RoomLayout } from './layout.js';
-import { agentLook, bossLook, looksFor, totalTokens, truncate } from './looks.js';
+import { agentLook, bossLook, humanLook, looksFor, poseClass, totalTokens, truncate } from './looks.js';
 import { formatTokens, hasUsage } from './panel.js';
-import { renderCharacter, renderDesk, setDeskScreen, svgEl, updateCharacter, type CharacterOpts } from './characters.js';
+import { renderChair, renderCharacter, renderDesk, setDeskScreen, svgEl, updateCharacter, type CharacterOpts } from './characters.js';
 
 const layouts = new WeakMap<SVGGElement, RoomLayout>();
 let clipSeq = 0;
@@ -137,8 +137,19 @@ function drawBoard(board: SVGGElement, bg: SVGGElement, l: RoomLayout, agents: A
   });
 }
 
+/** A desk and its chair for one seat (keyed by agent id, or 'boss'), in seat-local body units. */
 function placeDesk(desks: SVGGElement, key: string, x: number, y: number, s: number, screen: 'code' | 'err', sessionId: string): SVGGElement {
-  let d = desks.querySelector<SVGGElement>(`:scope > [data-desk-for="${CSS.escape(key)}"]`);
+  const k = CSS.escape(key);
+  const transform = `translate(${Math.round(x)},${Math.round(y)}) scale(${s})`;
+  let chair = desks.querySelector<SVGGElement>(`:scope > [data-chair-for="${k}"]`);
+  if (!chair) {
+    chair = renderChair(key === 'boss');
+    chair.dataset.chairFor = key;
+    chair.dataset.sessionId = sessionId;
+    desks.appendChild(chair);
+  }
+  chair.setAttribute('transform', transform);
+  let d = desks.querySelector<SVGGElement>(`:scope > [data-desk-for="${k}"]`);
   if (!d) {
     d = renderDesk(screen);
     d.dataset.deskFor = key;
@@ -146,7 +157,7 @@ function placeDesk(desks: SVGGElement, key: string, x: number, y: number, s: num
     desks.appendChild(d);
   }
   setDeskScreen(d, screen);
-  d.setAttribute('transform', `translate(${Math.round(x + 26 * s)},${Math.round(y + 20 * s)}) scale(${s})`);
+  d.setAttribute('transform', transform);
   return d;
 }
 
@@ -227,9 +238,9 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
       id: 'boss',
       sessionId: sid,
       color: main.color,
-      accessory: main.accessory,
+      human: humanLook(sid, 'boss'),
       mood: boss.mood,
-      pose: boss.pose,
+      pose: poseClass(boss, true),
       fx: boss.fx,
       name: 'Main agent',
       task: session.boss.status.replace(/_/g, ' '),
@@ -253,9 +264,9 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
         id: a.id,
         sessionId: sid,
         color: look.color,
-        accessory: look.accessory,
+        human: humanLook(a.id, a.type),
         mood: st.mood,
-        pose: st.pose,
+        pose: poseClass(st, false),
         fx: st.fx,
         since: a.stats.lastActivity,
         name: a.name ?? a.type,
@@ -280,6 +291,6 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
     if (el.dataset.departing && session.agents[id]) continue;
     el.remove();
   }
-  for (const el of Array.from(desks.children) as SVGGElement[]) if (!keep.has(el.dataset.deskFor ?? '')) el.remove();
+  for (const el of Array.from(desks.children) as SVGGElement[]) if (!keep.has(el.dataset.deskFor ?? el.dataset.chairFor ?? '')) el.remove();
   return l;
 }

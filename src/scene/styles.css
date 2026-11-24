@@ -50,16 +50,6 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 /* micro animations */
 .blink { animation: blink 4s infinite; transform-box: fill-box; transform-origin: center; }
 @keyframes blink { 0%, 93%, 100% { transform: scaleY(1) } 96% { transform: scaleY(.1) } }
-.typeL, .typeR { transform-box: fill-box; transform-origin: top center; animation: type .22s infinite alternate; }
-.typeR { animation-delay: .11s; }
-@keyframes type { from { transform: rotate(-14deg) } to { transform: rotate(10deg) } }
-.bob { animation: bob 1.6s ease-in-out infinite; }
-@keyframes bob { 50% { transform: translateY(-2px) } }
-.scratch { transform-box: fill-box; transform-origin: bottom center; animation: scratch .35s infinite alternate; }
-@keyframes scratch { from { transform: rotate(-20deg) } to { transform: rotate(15deg) } }
-.legA, .legB { transform-box: fill-box; transform-origin: top center; animation: step .3s infinite alternate; }
-.legB { animation-direction: alternate-reverse; }
-@keyframes step { from { transform: rotate(-25deg) } to { transform: rotate(25deg) } }
 .sweat { animation: drip 1.2s infinite; }
 @keyframes drip { from { transform: translateY(0); opacity: 1 } to { transform: translateY(12px); opacity: 0 } }
 .scroll { animation: scroll 2.2s linear infinite; }
@@ -77,11 +67,57 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 @keyframes zz { from { opacity: 0; transform: translate(0, 0) } 30% { opacity: 1 } to { opacity: 0; transform: translate(10px, -18px) } }
 .cooler { animation: glug 3s infinite; }
 @keyframes glug { 0%, 80%, 100% { transform: translateY(0) } 85% { transform: translateY(-3px) } }
-/* boss waiting on team: foot-tapping bob */
-.tapping .bob { animation: tap .45s ease-in-out infinite alternate; }
-@keyframes tap { from { transform: translateY(0) } to { transform: translateY(-2.5px) } }
-/* sleeping boss breathes slowly instead of bobbing */
-[data-mood="sleepy"] .bob { animation-duration: 3.2s; }
+
+/* Office-person rig, ported from the human-characters mockup (option A). Rotations are in rig units
+   around inline transform-origins (hip, knee, shoulder); --L is half a leg in screen px (set on g.char).
+   State classes on g.char: walking, sitting, carrying, giving, cheer; pose classes: pose-type,
+   pose-slump, pose-wave, pose-lean, pose-idle (applied while sitting, except pose-wave). */
+@keyframes rig-swingA { 0%, 100% { transform: rotate(26deg) } 50% { transform: rotate(-26deg) } }
+@keyframes rig-swingB { 0%, 100% { transform: rotate(-26deg) } 50% { transform: rotate(26deg) } }
+@keyframes rig-kneeA { 0%, 100% { transform: rotate(4deg) } 25% { transform: rotate(10deg) } 60% { transform: rotate(38deg) } 80% { transform: rotate(12deg) } }
+@keyframes rig-kneeB { 0%, 100% { transform: rotate(38deg) } 30% { transform: rotate(12deg) } 50% { transform: rotate(4deg) } 75% { transform: rotate(10deg) } }
+@keyframes rig-bob { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-1.6px) } }
+@keyframes rig-type { 0%, 100% { transform: rotate(-62deg) } 50% { transform: rotate(-74deg) } }
+@keyframes rig-wave { 0%, 100% { transform: rotate(-150deg) } 50% { transform: rotate(-120deg) } }
+@keyframes rig-breathe { 0%, 100% { transform: translateY(var(--L)) } 50% { transform: translateY(calc(var(--L) - .8px)) } }
+.char .limb, .char .shin, .char .body, .char .upper, .char .paper, .char > .anim > .tag, .char > .anim > .fx { transition: transform .35s ease, opacity .25s; }
+.char .dir { transition: transform .2s; }
+.char .paper, .char .forearms, .char .prop { opacity: 0; }
+
+.char.walking .body { animation: rig-bob .33s infinite ease-in-out; }
+.char.walking .leg.front { animation: rig-swingA .66s infinite ease-in-out; }
+.char.walking .leg.back { animation: rig-swingB .66s infinite ease-in-out; }
+.char.walking .leg.front .shin { animation: rig-kneeA .66s infinite ease-in-out; }
+.char.walking .leg.back .shin { animation: rig-kneeB .66s infinite ease-in-out; }
+.char.walking .arm.front { animation: rig-swingB .66s infinite ease-in-out; }
+.char.walking .arm.back { animation: rig-swingA .66s infinite ease-in-out; }
+.char.carrying .arm.front { animation: none; transform: rotate(-80deg); }
+.char.giving .arm.front { transform: rotate(-95deg); }
+.char.carrying .paper, .char.giving .paper { opacity: 1; }
+.char.cheer .arm.front, .char.pose-wave:not(.walking) .arm.front { transform: rotate(-135deg); animation: rig-wave .4s infinite ease-in-out; }
+
+/* seated: hips on the chair, thighs forward, shins down; the tag and overlays drop with the head */
+.char.sitting .body { transform: translateY(var(--L)); animation: rig-breathe 2.4s infinite ease-in-out; }
+.char.sitting > .anim > .tag, .char.sitting > .anim > .fx { transform: translateY(var(--L)); }
+.char.sitting .leg { transform: rotate(-90deg); }
+.char.sitting .leg .shin { transform: rotate(90deg); }
+.char.sitting .arm { transform: rotate(-66deg); }
+.char.sitting.pose-type .arm.front { animation: rig-type .28s infinite ease-in-out; }
+.char.sitting.pose-type .arm.back { animation: rig-type .28s infinite ease-in-out; animation-delay: -.14s; }
+/* quiet / maybe stuck: slumped forward, elbow on the desk, chin on the hand */
+.char.sitting.pose-slump .upper { transform: rotate(12deg); }
+.char.sitting.pose-slump .arm.front { transform: rotate(-70deg); }
+.char.sitting.pose-slump .prop { opacity: 1; }
+.char.sitting.pose-slump .body { animation-duration: 3.6s; }
+/* waiting on team: leaning back, arms crossed */
+.char.sitting.pose-lean .upper { transform: rotate(-11deg); }
+.char.sitting.pose-lean .arm { transform: rotate(-18deg); }
+.char.sitting.pose-lean .forearms { opacity: 1; }
+/* idle: hands resting on the desk, slow breathing */
+.char.sitting.pose-idle .arm { transform: rotate(-58deg); }
+.char.sitting.pose-idle .body { animation-duration: 3.6s; }
+/* compact-strip bust: upright and still */
+.char.bust .body, .char.bust .limb { transition: none; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

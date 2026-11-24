@@ -5,7 +5,7 @@ import { tickTimers } from './characters.js';
 import { InfoPanel } from './panel.js';
 import { tokText } from './rooms.js';
 import { workingCount } from '../shared/counts.js';
-import { bossLook, looksFor } from './looks.js';
+import { bossLook, humanLook, looksFor, poseClass } from './looks.js';
 import { renderCharacter } from './characters.js';
 import type { OfficeState } from '../shared/types.js';
 import { animStats, planAnimations, ROOM_FADED_EVENT, runAnimations } from './animator.js';
@@ -130,8 +130,12 @@ function renderStrip(state: OfficeState): void {
     const look = bossLook(s.boss.status);
     const NS = 'http://www.w3.org/2000/svg';
     const svgEl = document.createElementNS(NS, 'svg');
-    svgEl.setAttribute('viewBox', '-30 -72 60 76');
-    svgEl.appendChild(renderCharacter({ id: 'boss', sessionId: s.id, ...looksFor('boss'), mood: look.mood, pose: look.pose, fx: look.fx, name: roomTitle(s), tokens: '' }));
+    // head-and-shoulders bust: the viewBox (same aspect as the 36x46 chip svg, so nothing shows
+    // outside it) clips the upright rig just above the hands and hips
+    svgEl.setAttribute('viewBox', '-14.1 -62 28.2 36');
+    svgEl.appendChild(
+      renderCharacter({ id: 'boss', sessionId: s.id, color: looksFor('main').color, human: humanLook(s.id, 'boss'), mood: look.mood, pose: poseClass(look, true), name: roomTitle(s), tokens: '', bust: true }),
+    );
     const text = document.createElement('div');
     const name = document.createElement('div');
     name.className = 'cr-name';
