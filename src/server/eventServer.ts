@@ -33,10 +33,15 @@ function reply(res: ServerResponse, status: number, body = '', headers: Record<s
   res.end(body);
 }
 
-export type EventServer = { url: string; close(): Promise<void> };
+export type StartedBy = 'plugin' | 'app' | 'serve';
+export type EventServer = { url: string; clientCount(): number; close(): Promise<void> };
 
-export function startEventServer(opts: { port: number; token: string; store: OfficeStore; staticDir: string }): Promise<EventServer> {
+export function startEventServer(opts: { port: number; token: string; store: OfficeStore; staticDir: string; version?: string; startedBy?: StartedBy }): Promise<EventServer> {
   const { port, token, store } = opts;
+  const version = opts.version ?? '0.0.0';
+  const startedBy: StartedBy = opts.startedBy ?? 'app';
+  /** bumped on every store change, whether or not a client is listening */
+  let seq = 0;
   const root = resolve(opts.staticDir);
   const wss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
@@ -56,6 +61,7 @@ export function startEventServer(opts: { port: number; token: string; store: Off
     for (const ws of clients) send(ws, msg);
   };
   store.onChange((events: OfficeEvent[]) => {
+    seq++;
     if (clients.size === 0) return;
     queued.push(...events);
     timer ??= setTimeout(flush, BROADCAST_MS);
@@ -110,6 +116,11 @@ export function startEventServer(opts: { port: number; token: string; store: Off
     });
   }
 
+  function handleState(req: IncomingMessage, res: ServerResponse): void {
+    if (!tokenOk(req.headers['x-agent-office-token'], token)) return reply(res, 401, 'unauthorized');
+    reply(res, 200, JSON.stringify({ version, startedBy, seq, state: store.snapshot() }), { 'Content-Type': 'application/json; charset=utf-8' });
+  }
+
   async function handleStatic(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
     let rel: string;
     try {
@@ -137,6 +148,7 @@ export function startEventServer(opts: { port: number; token: string; store: Off
         return handleEvent(req, res);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, 'method not allowed');
+      if (url.pathname === '/state') return handleState(req, res);
       void handleStatic(req, res, url.pathname);
     } catch {
       if (!res.headersSent) reply(res, 400, 'bad request');
@@ -180,6 +192,7 @@ export function startEventServer(opts: { port: number; token: string; store: Off
       const actual = (server.address() as { port: number }).port;
       resolveStart({
         url: `http://${HOST}:${actual}`,
+        clientCount: () => clients.size,
         close: () =>
           new Promise<void>((done) => {
             if (timer) clearTimeout(timer);

@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { claudeDir as defaultClaudeDir, loadOrCreateConfig } from '../shared/config.js';
 import type { AgentStatus, HookEvent } from '../shared/types.js';
-import { startEventServer } from '../server/eventServer.js';
+import { startEventServer, type StartedBy } from '../server/eventServer.js';
 import {
   discoverActiveSessions,
   findMainLog,
@@ -22,7 +22,7 @@ import { LogWatcher } from './logWatcher.js';
 import type { LogDelta } from './logParser.js';
 import { OfficeStore } from './store.js';
 
-export type App = { url: string; store: OfficeStore; watchedPaths(): string[]; close(): Promise<void> };
+export type App = { url: string; store: OfficeStore; watchedPaths(): string[]; clientCount(): number; close(): Promise<void> };
 
 /** `seen`: the session/agent has existed in the store at least once. Only then does its absence mean "pruned"
  * (a discovered subagent has no store entry until its first delta, so absence alone proves nothing). */
@@ -38,7 +38,7 @@ const RUNNING: ReadonlySet<AgentStatus> = new Set(['spawning', 'working', 'quiet
 /** `<repo>/dist/scene`, relative to this file (src/core or dist/core). */
 const defaultStaticDir = () => join(fileURLToPath(new URL('../..', import.meta.url)), 'dist', 'scene');
 
-export async function startApp(opts: { port?: number; token?: string; claudeDir?: string; staticDir?: string; configDir?: string; rescanMs?: number } = {}): Promise<App> {
+export async function startApp(opts: { port?: number; token?: string; claudeDir?: string; staticDir?: string; configDir?: string; rescanMs?: number; version?: string; startedBy?: StartedBy } = {}): Promise<App> {
   const cfg = opts.port !== undefined && opts.token !== undefined ? { port: opts.port, token: opts.token } : loadOrCreateConfig(opts.configDir);
   const port = opts.port ?? cfg.port;
   const token = opts.token ?? cfg.token;
@@ -295,7 +295,7 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
   const rescanTimer = setInterval(rescan, opts.rescanMs ?? 3000);
   let server: Awaited<ReturnType<typeof startEventServer>>;
   try {
-    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir() });
+    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir(), version: opts.version, startedBy: opts.startedBy });
   } catch (err) {
     clearInterval(tick);
     clearInterval(rescanTimer);
@@ -307,6 +307,7 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
     url: server.url,
     store,
     watchedPaths: () => watcher.watchedPaths(),
+    clientCount: () => server.clientCount(),
     async close() {
       clearInterval(tick);
       clearInterval(rescanTimer);

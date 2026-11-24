@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.scene.json && npm run build:scene && npm run build:main",
+    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.scene.json && npm run build:scene && npm run build:main && npm run build:plugin",
     "serve": "tsx tools/serve.ts",
     "demo": "tsx tools/demo.ts",
     "build:scene": "tsx tools/build-scene.ts",
     "build:main": "tsx tools/build-main.ts",
+    "build:plugin": "tsx tools/build-plugin.ts",
     "start": "electron dist/main/main.js"
   },
   "dependencies": {

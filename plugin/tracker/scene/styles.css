@@ -1,0 +1,160 @@
+/* Agent Office scene. Keyframes ported from the approved mockup (office-v2.html). */
+html, body { margin: 0; height: 100%; background: #2f2b3a; overflow: hidden; }
+body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
+#floor { position: absolute; inset: 0; overflow: auto; background: #2f2b3a; }
+#office { display: block; overflow: visible; transform-origin: 0 0; transition: transform .25s ease; }
+#floor.zoomed { overflow: hidden; }
+#rooms .room { transition: opacity .25s ease; cursor: zoom-in; }
+#rooms.zoomed .room { cursor: zoom-out; }
+#rooms.zoomed .room:not(.zoom-target) { opacity: 0; pointer-events: none; }
+.char { cursor: pointer; }
+.char.sel .pill { stroke-width: 3.5; }
+#empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 15px; pointer-events: none; }
+#empty[hidden], #conn[hidden] { display: none; }
+#conn { position: absolute; top: 8px; right: 12px; padding: 2px 10px; border-radius: 10px; background: #dc2626; color: #fff; font-size: 11px; font-weight: 600; }
+
+.room .dim { opacity: 0; pointer-events: none; transition: opacity .6s; }
+.room.room--dim .dim { opacity: .32; }
+.char .tag { pointer-events: none; }
+/* animator: the door leaf swings from its hinge; overlays never catch clicks */
+.doorL { transform-box: fill-box; transform-origin: left center; }
+.anim-fx { pointer-events: none; }
+.anim-fx .pop { transform-box: fill-box; transform-origin: center; }
+/* crowded rooms: agent name tags only on hover (the sign shows the agent count) */
+.room--crowded .char:not(.boss):not(:hover) .tag { display: none; }
+
+/* info panel: overlay card on the right, styled after the mockup's panel */
+.panel { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 300px; box-sizing: border-box; overflow-y: auto; z-index: 5;
+  background: #fff; border: 1px solid #e3e3e8; border-radius: 12px; padding: 16px; color: #222; box-shadow: 0 4px 18px rgba(0,0,0,.25); }
+.panel[hidden] { display: none; }
+@media (max-width: 519px) { .panel { left: 8px; right: 8px; top: 8px; bottom: 8px; width: auto; } }
+.panel h3 { margin: 0 28px 2px 0; font-size: 17px; overflow-wrap: anywhere; }
+.panel .sub { color: #666; margin-bottom: 10px; overflow-wrap: anywhere; }
+.p-close { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: 0; border-radius: 13px; background: #f1f5f9; color: #334155; font-size: 18px; line-height: 1; cursor: pointer; }
+.p-close:hover { background: #e2e8f0; }
+.p-left { background: #f1f5f9; color: #475569; border-radius: 8px; padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
+.chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; margin: 0 4px 4px 0; overflow-wrap: anywhere; }
+.chip-model { background: #f1f5f9; color: #334155; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
+.stat { background: #f6f6f9; border-radius: 8px; padding: 6px 8px; min-width: 0; }
+.stat b { display: block; font-size: 15px; }
+.stat span { font-size: 11px; color: #777; }
+.bar { height: 8px; background: #eee; border-radius: 5px; overflow: hidden; margin: 3px 0 10px; }
+.bar i { display: block; height: 100%; background: linear-gradient(90deg, #34d399, #f59e0b); }
+.panel h4 { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #888; }
+.tools span { display: inline-block; background: #eef2ff; color: #3730a3; border-radius: 6px; padding: 1px 6px; margin: 2px 3px 2px 0; font-size: 11px; }
+.log { font: 11px/1.6 ui-monospace, monospace; color: #444; max-height: 120px; overflow: auto; background: #fafafa; border-radius: 6px; padding: 6px; }
+.log div { overflow-wrap: anywhere; }
+.log div::before { content: "› "; color: #aaa; }
+
+/* micro animations */
+.blink { animation: blink 4s infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes blink { 0%, 93%, 100% { transform: scaleY(1) } 96% { transform: scaleY(.1) } }
+.sweat { animation: drip 1.2s infinite; }
+@keyframes drip { from { transform: translateY(0); opacity: 1 } to { transform: translateY(12px); opacity: 0 } }
+.scroll { animation: scroll 2.2s linear infinite; }
+@keyframes scroll { from { transform: translateY(0) } to { transform: translateY(-24px) } }
+.cloud { animation: cloud 30s linear infinite; }
+@keyframes cloud { from { transform: translateX(-80px) } to { transform: translateX(200px) } }
+.hand { transform-box: fill-box; transform-origin: bottom center; animation: spin 8s linear infinite; }
+.hand2 { transform-box: fill-box; transform-origin: bottom center; animation: spin 60s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg) } }
+.steam { animation: steam 2s infinite; }
+@keyframes steam { from { transform: translateY(0); opacity: .7 } to { transform: translateY(-12px); opacity: 0 } }
+.bubbleq { animation: qq 1s ease-in-out infinite alternate; }
+@keyframes qq { to { transform: translateY(-4px) } }
+.zz { animation: zz 2.5s infinite; opacity: 0; }
+@keyframes zz { from { opacity: 0; transform: translate(0, 0) } 30% { opacity: 1 } to { opacity: 0; transform: translate(10px, -18px) } }
+.cooler { animation: glug 3s infinite; }
+@keyframes glug { 0%, 80%, 100% { transform: translateY(0) } 85% { transform: translateY(-3px) } }
+
+/* Office-person rig, ported from the human-characters mockup (option A). Rotations are in rig units
+   around inline transform-origins (hip, knee, shoulder); --L is half a leg in screen px (set on g.char).
+   State classes on g.char: walking, sitting, carrying, giving, cheer; pose classes: pose-type,
+   pose-slump, pose-wave, pose-lean, pose-idle (applied while sitting, except pose-wave). */
+@keyframes rig-swingA { 0%, 100% { transform: rotate(26deg) } 50% { transform: rotate(-26deg) } }
+@keyframes rig-swingB { 0%, 100% { transform: rotate(-26deg) } 50% { transform: rotate(26deg) } }
+@keyframes rig-kneeA { 0%, 100% { transform: rotate(4deg) } 25% { transform: rotate(10deg) } 60% { transform: rotate(38deg) } 80% { transform: rotate(12deg) } }
+@keyframes rig-kneeB { 0%, 100% { transform: rotate(38deg) } 30% { transform: rotate(12deg) } 50% { transform: rotate(4deg) } 75% { transform: rotate(10deg) } }
+@keyframes rig-bob { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-1.6px) } }
+@keyframes rig-type { 0%, 100% { transform: rotate(-62deg) } 50% { transform: rotate(-74deg) } }
+@keyframes rig-wave { 0%, 100% { transform: rotate(-150deg) } 50% { transform: rotate(-120deg) } }
+@keyframes rig-breathe { 0%, 100% { transform: translateY(var(--L)) } 50% { transform: translateY(calc(var(--L) - .8px)) } }
+.char .limb, .char .shin, .char .body, .char .upper, .char .paper, .char > .anim > .tag, .char > .anim > .fx { transition: transform .35s ease, opacity .25s; }
+.char .dir { transition: transform .2s; }
+.char .paper, .char .forearms, .char .prop { opacity: 0; }
+
+.char.walking .body { animation: rig-bob .33s infinite ease-in-out; }
+.char.walking .leg.front { animation: rig-swingA .66s infinite ease-in-out; }
+.char.walking .leg.back { animation: rig-swingB .66s infinite ease-in-out; }
+.char.walking .leg.front .shin { animation: rig-kneeA .66s infinite ease-in-out; }
+.char.walking .leg.back .shin { animation: rig-kneeB .66s infinite ease-in-out; }
+.char.walking .arm.front { animation: rig-swingB .66s infinite ease-in-out; }
+.char.walking .arm.back { animation: rig-swingA .66s infinite ease-in-out; }
+.char.carrying .arm.front { animation: none; transform: rotate(-80deg); }
+.char.giving .arm.front { transform: rotate(-95deg); }
+.char.carrying .paper, .char.giving .paper { opacity: 1; }
+.char.cheer .arm.front, .char.pose-wave:not(.walking) .arm.front { transform: rotate(-135deg); animation: rig-wave .4s infinite ease-in-out; }
+
+/* seated: hips on the chair, thighs forward, shins down; the tag and overlays drop with the head */
+.char.sitting .body { transform: translateY(var(--L)); animation: rig-breathe 2.4s infinite ease-in-out; }
+.char.sitting > .anim > .tag, .char.sitting > .anim > .fx { transform: translateY(var(--L)); }
+.char.sitting .leg { transform: rotate(-90deg); }
+.char.sitting .leg .shin { transform: rotate(90deg); }
+.char.sitting .arm { transform: rotate(-66deg); }
+.char.sitting.pose-type .arm.front { animation: rig-type .28s infinite ease-in-out; }
+.char.sitting.pose-type .arm.back { animation: rig-type .28s infinite ease-in-out; animation-delay: -.14s; }
+/* quiet / maybe stuck: slumped forward, elbow on the desk, chin on the hand */
+.char.sitting.pose-slump .upper { transform: rotate(12deg); }
+.char.sitting.pose-slump .arm.front { transform: rotate(-70deg); }
+.char.sitting.pose-slump .prop { opacity: 1; }
+.char.sitting.pose-slump .body { animation-duration: 3.6s; }
+/* waiting on team: leaning back, arms crossed */
+.char.sitting.pose-lean .upper { transform: rotate(-11deg); }
+.char.sitting.pose-lean .arm { transform: rotate(-18deg); }
+.char.sitting.pose-lean .forearms { opacity: 1; }
+/* idle: hands resting on the desk, slow breathing */
+.char.sitting.pose-idle .arm { transform: rotate(-58deg); }
+.char.sitting.pose-idle .body { animation-duration: 3.6s; }
+/* the receiver of a handoff waves even while seated (beats the seated arm poses above) */
+.char.sitting.cheer .arm.front { transform: rotate(-135deg); animation: rig-wave .4s infinite ease-in-out; }
+/* sitting down / standing up: hold the walk and breathe cycles so the body, legs and arms ease
+   between standing and seated (the animator adds this for ~.45s around a sit or stand) */
+.char.settling .body, .char.settling .limb, .char.settling .shin { animation: none; }
+/* the seated arm cycles (typing, (0,5,0)) are held too, so the arms ease onto the desk first */
+.char.settling:not(.walking):not(.bust) .limb.arm { animation: none; }
+/* compact-strip bust: upright and still; the needs-you wave stays small so the hand stays inside
+   the bust's viewBox */
+.char.bust .body, .char.bust .limb { transition: none; }
+@keyframes rig-wave-bust { 0%, 100% { transform: rotate(-160deg) } 50% { transform: rotate(-145deg) } }
+.char.bust.pose-wave:not(.walking) .arm.front { transform: rotate(-155deg); animation: rig-wave-bust .5s infinite ease-in-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* Electron shell: transparent page, slim drag bar on top, rounded floor (?shell=electron) */
+html.shell, html.shell body { background: transparent; }
+#dragbar { position: absolute; top: 0; left: 0; right: 0; height: 18px; z-index: 10; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 4px 0 12px; background: #3a3547; border-radius: 12px 12px 0 0; color: #94a3b8; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; -webkit-app-region: drag; user-select: none; }
+#dragbar[hidden] { display: none; }
+#hide-btn { -webkit-app-region: no-drag; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: #94a3b8; font-size: 10px; line-height: 16px; cursor: pointer; }
+#hide-btn:hover { background: #dc2626; color: #fff; }
+html.shell #floor { top: 18px; border-radius: 0 0 12px 12px; }
+html.shell .panel { top: 30px; }
+html.shell #empty { top: 18px; }
+html.shell #conn { top: 24px; }
+
+/* compact strip (?compact=1): one chip per active room */
+#strip { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; align-items: center; padding: 6px 10px; box-sizing: border-box; overflow-x: auto; overflow-y: hidden; background: #2f2b3a; border-radius: 12px; }
+#strip[hidden] { display: none; }
+html.shell #strip { top: 18px; border-radius: 0 0 12px 12px; }
+html.compact #floor, html.compact #panel { display: none; }
+html.compact #empty { top: 18px; }
+.chip-room { flex: none; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 12px 0 6px; border: 0; border-radius: 12px; background: #403a50; color: #e2e8f0; font: inherit; cursor: pointer; text-align: left; }
+.chip-room:hover { background: #4b4560; }
+.chip-room svg { width: 36px; height: 46px; flex: none; }
+.chip-room .tag { display: none; }
+.chip-room .cr-name { font-weight: 700; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-room .cr-counts { font-size: 11px; color: #cbd5e1; }
+.chip-room .cr-need { color: #fbbf24; font-weight: 700; }
