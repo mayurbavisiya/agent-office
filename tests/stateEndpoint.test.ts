@@ -94,3 +94,34 @@ describe('POST /shutdown', () => {
     expect(asked()).toBe(0);
   });
 });
+
+describe('GET /usage', () => {
+  it('needs the token and valid days, and totals every session log in range', async () => {
+    const port = await freePort();
+    const d = mkdtempSync(join(tmpdir(), 'ao-us-'));
+    writeFileSync(join(d, 'index.html'), 'x');
+    const claude = mkdtempSync(join(tmpdir(), 'ao-cl-'));
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(claude, 'projects', '-p'), { recursive: true });
+    const ts = new Date(2026, 10, 20, 12).toISOString();
+    const line = (id: string, out: number) => JSON.stringify({ type: 'assistant', timestamp: ts, requestId: 'r', message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 0, output_tokens: out, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } });
+    writeFileSync(join(claude, 'projects', '-p', 's.jsonl'), `${line('a', 1_000_000)}\n${line('b', 500_000)}\n`);
+    const app = await startApp({ port, token: 'tk', configDir: d, claudeDir: claude, staticDir: d });
+    closers.push(() => app.close());
+    const get = (q: string, token = 'tk') => fetch(`${app.url}/usage${q}`, { headers: { 'X-Agent-Office-Token': token } });
+    expect((await get('?from=2026-11-01&to=2026-11-30', 'nope')).status).toBe(401);
+    expect((await get('?from=nov&to=2026-11-30')).status).toBe(400);
+    expect((await get('?from=2026-11-30&to=2026-11-01')).status).toBe(400);
+    let b: { scanning: boolean; total: { output: number; cost: number }; days: unknown[] };
+    for (;;) {
+      b = await (await get('?from=2026-11-01&to=2026-11-30')).json();
+      if (!b.scanning) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(b.total.output).toBe(1_500_000);
+    expect(b.total.cost).toBeCloseTo(30, 10); // $20 per million output tokens on Opus 5.5
+    expect(b.days).toHaveLength(1);
+    const empty = await (await get('?from=2026-12-01&to=2026-12-31')).json();
+    expect(empty.total.output).toBe(0);
+  });
+});

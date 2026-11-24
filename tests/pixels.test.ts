@@ -352,3 +352,14 @@ describe('tables copied from src stay in step', () => {
     expect(PRICES).toEqual(Object.fromEntries(Object.entries(MODELS).map(([k, m]) => [k, [m.inputPerM, m.outputPerM, m.cacheReadPerM, m.cacheWritePerM]])));
   });
 });
+
+describe('today usage line', () => {
+  it('reads usage.today from /state and words it for the panel', async () => {
+    const { parseSnapshot, todayLine } = await import('../plugin/mod/pixels.js');
+    const snap = parseSnapshot({ version: '0.1.4', startedAt: 1, seq: 2, state: { sessions: {} }, usage: { today: { cost: 212.951, tokens: 509_101_112 } } })!;
+    expect(snap.today).toEqual({ cost: 212.951, tokens: 509_101_112 });
+    expect(todayLine(snap.today)).toBe('today · ~$212.95 est. · 509.1M tokens across all sessions');
+    expect(parseSnapshot({ state: { sessions: {} } })!.today).toBeUndefined();
+    expect(todayLine(undefined)).toBe('');
+  });
+});

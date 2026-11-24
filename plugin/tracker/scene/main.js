@@ -316,10 +316,20 @@ function officeTitle(waiting) {
 
 // src/core/pricing.ts
 var MODELS = {
-  "claude-fable-5-2": { inputPerM: 8, outputPerM: 40, cacheReadPerM: 0.2, cacheWritePerM: 16, contextSize: 1e6 },
-  "claude-opus-5-5": { inputPerM: 4, outputPerM: 20, cacheReadPerM: 0.2, cacheWritePerM: 8, contextSize: 1e6 },
-  "claude-sonnet-5-5": { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.1, cacheWritePerM: 4, contextSize: 1e6 },
-  "claude-haiku-5-5": { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.2, contextSize: 1e6 }
+  "claude-fable-5-2": { inputPerM: 8, outputPerM: 40, cacheReadPerM: 0.2, cacheWritePerM: 16, cacheWrite5mPerM: 10, contextSize: 1e6 },
+  "claude-fable-5-1": { inputPerM: 10, outputPerM: 50, cacheReadPerM: 0.25, cacheWritePerM: 20, cacheWrite5mPerM: 12.5, contextSize: 1e6 },
+  "claude-opus-5-5": { inputPerM: 4, outputPerM: 20, cacheReadPerM: 0.2, cacheWritePerM: 8, cacheWrite5mPerM: 5, contextSize: 1e6 },
+  "claude-sonnet-5-5": { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.1, cacheWritePerM: 4, cacheWrite5mPerM: 2.5, contextSize: 1e6 },
+  "claude-sonnet-4-6": { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 6, cacheWrite5mPerM: 3.75, contextSize: 1e6 },
+  "claude-haiku-5-5": {
+    inputPerM: 0.1,
+    outputPerM: 0.5,
+    cacheReadPerM: 0.01,
+    cacheWritePerM: 0.2,
+    cacheWrite5mPerM: 0.125,
+    contextSize: 1e6,
+    long: { over: 1e5, inputPerM: 0.5, outputPerM: 2.5, cacheReadPerM: 0.05, cacheWritePerM: 1, cacheWrite5mPerM: 0.625 }
+  }
 };
 var lookup = (model) => model !== void 0 && Object.prototype.hasOwnProperty.call(MODELS, model) ? MODELS[model] : void 0;
 function contextSize(model) {
@@ -1718,6 +1728,194 @@ function receiver(room, layout, targetId) {
   return { x: p.x, y: p.y, scale: id === "boss" ? layout.bossScale : layout.scale, el: el2, anim: el2?.querySelector(":scope > .anim") ?? null };
 }
 
+// src/scene/usageBar.ts
+var pad2 = (n) => String(n).padStart(2, "0");
+var dayOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+function rangeFor(kind, now, custom) {
+  const today = dayOf(now);
+  if (kind === "week") {
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getDay() + 6) % 7);
+    return { from: dayOf(monday), to: today };
+  }
+  if (kind === "month") return { from: dayOf(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
+  if (kind === "custom" && custom && /^\d{4}-\d{2}-\d{2}$/.test(custom.from) && /^\d{4}-\d{2}-\d{2}$/.test(custom.to)) {
+    return custom.from <= custom.to ? { from: custom.from, to: custom.to } : { from: custom.to, to: custom.from };
+  }
+  return { from: today, to: today };
+}
+function fmtTokens(n) {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e7) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(Math.round(n));
+}
+function fmtUsd(n) {
+  if (n > 0 && n < 5e-3) return "<$0.01";
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+var sumTokens = (t) => t.input + t.output + t.cacheRead + t.cacheWrite;
+function modelLabel(id) {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?$/.exec(id);
+  if (!m) return id;
+  return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ""}`;
+}
+function dayLabel(day, now) {
+  const [y, mo, d] = day.split("-").map(Number);
+  const dt = new Date(y, mo - 1, d);
+  const s = dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return y === now.getFullYear() ? s : `${s}, ${y}`;
+}
+function barText(r) {
+  if (!r) return { cost: "\u2014", tokens: "\u2014", written: "\u2014", cacheWrite: "\u2014", cacheRead: "\u2014", note: "" };
+  const t = r.total;
+  const note = r.scanning ? "reading logs\u2026" : t.unpricedTokens > 0 ? `${fmtTokens(t.unpricedTokens)} tokens from unpriced models not in cost` : "";
+  return { cost: `~${fmtUsd(t.cost)}`, tokens: fmtTokens(sumTokens(t)), written: fmtTokens(t.output), cacheWrite: fmtTokens(t.cacheWrite), cacheRead: fmtTokens(t.cacheRead), note };
+}
+var RANGE_KEY = "agentOffice.usageRange";
+var POLL_MS = 3e4;
+var UsageBar = class {
+  constructor(el2, details, token2) {
+    this.el = el2;
+    this.details = details;
+    this.token = token2;
+    const today = dayOf(/* @__PURE__ */ new Date());
+    this.custom = { from: today, to: today };
+    try {
+      const saved = JSON.parse(localStorage.getItem(RANGE_KEY) ?? "null");
+      if (saved?.kind && ["today", "week", "month", "custom"].includes(saved.kind)) this.kind = saved.kind;
+      if (saved?.custom) this.custom = rangeFor("custom", /* @__PURE__ */ new Date(), saved.custom);
+    } catch {
+    }
+    el2.addEventListener("click", (e) => {
+      const t = e.target;
+      const b = t.closest("[data-range]");
+      if (b) return this.setKind(b.dataset.range);
+      if (t.closest("#u-more")) this.toggleDetails();
+    });
+    for (const id of ["u-from", "u-to"]) {
+      el2.querySelector(`#${id}`)?.addEventListener("change", () => {
+        const from = el2.querySelector("#u-from").value;
+        const to = el2.querySelector("#u-to").value;
+        if (from && to) {
+          this.custom = rangeFor("custom", /* @__PURE__ */ new Date(), { from, to });
+          this.remember();
+          void this.load();
+        }
+      });
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) void this.load();
+    });
+    this.paintControls();
+    void this.load();
+  }
+  el;
+  details;
+  token;
+  kind = "today";
+  custom;
+  reply = null;
+  timer;
+  seq = 0;
+  setKind(kind) {
+    this.kind = kind;
+    this.remember();
+    this.paintControls();
+    void this.load();
+  }
+  remember() {
+    try {
+      localStorage.setItem(RANGE_KEY, JSON.stringify({ kind: this.kind, custom: this.custom }));
+    } catch {
+    }
+  }
+  toggleDetails() {
+    const open = this.details.hidden;
+    this.details.hidden = !open;
+    this.el.querySelector("#u-more")?.setAttribute("aria-expanded", String(open));
+    if (open) this.paintDetails();
+  }
+  paintControls() {
+    for (const b of this.el.querySelectorAll("[data-range]")) b.setAttribute("aria-pressed", String(b.dataset.range === this.kind));
+    const box = this.el.querySelector(".u-custom");
+    if (box) box.hidden = this.kind !== "custom";
+    const today = dayOf(/* @__PURE__ */ new Date());
+    const from = this.el.querySelector("#u-from");
+    const to = this.el.querySelector("#u-to");
+    if (from && to) {
+      from.value = this.custom.from;
+      to.value = this.custom.to;
+      from.max = today;
+      to.max = today;
+    }
+  }
+  async load() {
+    clearTimeout(this.timer);
+    const mine = ++this.seq;
+    const r = rangeFor(this.kind, /* @__PURE__ */ new Date(), this.custom);
+    let next = POLL_MS;
+    try {
+      const res = await fetch(`/usage?from=${r.from}&to=${r.to}`, { headers: { "X-Agent-Office-Token": this.token }, cache: "no-store" });
+      if (mine !== this.seq) return;
+      if (res.ok) {
+        this.reply = await res.json();
+        if (this.reply.scanning) next = 2e3;
+      } else {
+        this.reply = null;
+        this.el.hidden = res.status === 404;
+      }
+    } catch {
+      if (mine !== this.seq) return;
+      next = 5e3;
+    }
+    this.paint();
+    this.timer = setTimeout(() => void this.load(), next);
+  }
+  paint() {
+    const t = barText(this.reply);
+    const set = (id, v) => {
+      const n = this.el.querySelector(`#${id}`);
+      if (n && n.textContent !== v) n.textContent = v;
+    };
+    set("u-cost", t.cost);
+    set("u-tok", t.tokens);
+    set("u-out", t.written);
+    set("u-cw", t.cacheWrite);
+    set("u-cr", t.cacheRead);
+    set("u-note", t.note);
+    if (!this.details.hidden) this.paintDetails();
+  }
+  /** The table: a row per day with its models beneath, like `ccusage`, and a total row. Built from numbers and model ids only. */
+  paintDetails() {
+    const r = this.reply;
+    const now = /* @__PURE__ */ new Date();
+    const doc = this.details.ownerDocument;
+    const table = doc.createElement("table");
+    const head = table.createTHead().insertRow();
+    for (const h of ["Date", "Input", "Output", "Cache write", "Cache read", "Total tokens", "Est. cost"]) {
+      const th = doc.createElement("th");
+      th.textContent = h;
+      head.appendChild(th);
+    }
+    const body = table.createTBody();
+    const row = (label, t, cls) => {
+      const tr2 = body.insertRow();
+      tr2.className = cls;
+      for (const v of [label, fmtTokens(t.input), fmtTokens(t.output), fmtTokens(t.cacheWrite), fmtTokens(t.cacheRead), fmtTokens(sumTokens(t)), fmtUsd(t.cost)]) tr2.insertCell().textContent = v;
+    };
+    for (const d of [...r?.days ?? []].reverse()) {
+      row(dayLabel(d.day, now), d.total, "u-day");
+      for (const [m, t] of Object.entries(d.models).sort((a, b) => b[1].cost - a[1].cost)) row(modelLabel(m), t, "u-model");
+    }
+    if (r && r.days.length) row("Total", r.total, "u-total");
+    const note = doc.createElement("p");
+    note.className = "u-fine";
+    note.textContent = !r ? "No usage data yet." : r.days.length === 0 ? "No Claude Code usage in this range." : "Estimated at Anthropic API prices. On a Pro or Max plan you pay a flat subscription, so this is what the same usage would cost pay-per-token. Totals are saved daily to ~/.agent-office/usage.json, so they outlast Claude Code\u2019s 30-day log cleanup.";
+    this.details.replaceChildren(...r && r.days.length ? [table] : [], note);
+  }
+};
+
 // src/scene/main.ts
 var viewport = document.getElementById("floor");
 var svg = document.getElementById("office");
@@ -1739,6 +1937,9 @@ if (shell) {
 }
 var strip = document.getElementById("strip");
 strip.hidden = !compact;
+var usageEl = document.getElementById("usage");
+if (compact || !token) usageEl.hidden = true;
+else new UsageBar(usageEl, document.getElementById("usage-details"), token);
 var panelEl = document.getElementById("panel");
 var panel = new InfoPanel(panelEl);
 var PANEL_W = 300 + 24;

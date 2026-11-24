@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { DAY_RE, localDay, totalTokens, type UsageSummary } from '../core/usage.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
@@ -36,7 +37,10 @@ function reply(res: ServerResponse, status: number, body = '', headers: Record<s
 export type StartedBy = 'plugin' | 'app' | 'serve';
 export type EventServer = { url: string; clientCount(): number; close(): Promise<void> };
 
-export function startEventServer(opts: { port: number; token: string; store: OfficeStore; staticDir: string; version?: string; startedBy?: StartedBy; onShutdown?: () => void }): Promise<EventServer> {
+/** What the server needs from the usage ledger (src/core/usage.ts). */
+export type UsageSource = { summary(from: string, to: string): UsageSummary; scanning: boolean };
+
+export function startEventServer(opts: { port: number; token: string; store: OfficeStore; staticDir: string; version?: string; startedBy?: StartedBy; onShutdown?: () => void; usage?: UsageSource }): Promise<EventServer> {
   const { port, token, store } = opts;
   const version = opts.version ?? '0.0.0';
   const startedBy: StartedBy = opts.startedBy ?? 'app';
@@ -119,12 +123,32 @@ export function startEventServer(opts: { port: number; token: string; store: Off
   }
 
   /**
-   * `GET /state` (token in `X-Agent-Office-Token`): `{ version, startedBy, startedAt, seq, state }`.
+   * `GET /state` (token in `X-Agent-Office-Token`): `{ version, startedBy, startedAt, seq, state, usage? }`;
+   * `usage.today` is today's cost and tokens across every session, once the first log read is done.
    * `seq` restarts at 0 with each run, so a reader keys "changed" on `version` + `startedAt` + `seq`.
    */
   function handleState(req: IncomingMessage, res: ServerResponse): void {
     if (!tokenOk(req.headers['x-agent-office-token'], token)) return reply(res, 401, 'unauthorized');
-    reply(res, 200, JSON.stringify({ version, startedBy, startedAt, seq, state: store.snapshot() }), { 'Content-Type': 'application/json; charset=utf-8' });
+    const body: Record<string, unknown> = { version, startedBy, startedAt, seq, state: store.snapshot() };
+    if (opts.usage && !opts.usage.scanning) {
+      const day = localDay(Date.now());
+      const t = opts.usage.summary(day, day).total;
+      body.usage = { today: { cost: t.cost, tokens: totalTokens(t) } };
+    }
+    reply(res, 200, JSON.stringify(body), { 'Content-Type': 'application/json; charset=utf-8' });
+  }
+
+  /**
+   * `GET /usage?from=YYYY-MM-DD&to=YYYY-MM-DD` (token in `X-Agent-Office-Token`): token and cost totals
+   * across every session for those local days, plus `scanning` while the first read of the logs runs.
+   */
+  function handleUsage(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    if (!tokenOk(req.headers['x-agent-office-token'], token)) return reply(res, 401, 'unauthorized');
+    if (!opts.usage) return reply(res, 404, 'usage not available');
+    const from = url.searchParams.get('from') ?? '';
+    const to = url.searchParams.get('to') ?? '';
+    if (!DAY_RE.test(from) || !DAY_RE.test(to) || from > to) return reply(res, 400, 'from and to must be YYYY-MM-DD, from <= to');
+    reply(res, 200, JSON.stringify({ scanning: opts.usage.scanning, ...opts.usage.summary(from, to) }), { 'Content-Type': 'application/json; charset=utf-8' });
   }
 
   /** `/office stop`: only a tracker the plugin started stops this way; the app quits from its menu. */
@@ -169,6 +193,7 @@ export function startEventServer(opts: { port: number; token: string; store: Off
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, 'method not allowed');
       if (url.pathname === '/state') return handleState(req, res);
+      if (url.pathname === '/usage') return handleUsage(req, res, url);
       void handleStatic(req, res, url.pathname);
     } catch {
       if (!res.headersSent) reply(res, 400, 'bad request');

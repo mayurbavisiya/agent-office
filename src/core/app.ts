@@ -21,6 +21,7 @@ import {
 import { LogWatcher } from './logWatcher.js';
 import type { LogDelta } from './logParser.js';
 import { OfficeStore } from './store.js';
+import { UsageLedger } from './usage.js';
 
 export type App = { url: string; store: OfficeStore; watchedPaths(): string[]; clientCount(): number; close(): Promise<void> };
 
@@ -292,13 +293,17 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
   };
 
   const tick = setInterval(() => store.tick(Date.now()), 1000);
+  // usage statistics: only for a real run (with a config dir), never for a bare test server
+  const usage = opts.configDir !== undefined ? new UsageLedger(join(cdir, 'projects'), join(opts.configDir, 'usage.json')) : undefined;
+  void usage?.start();
   const rescanTimer = setInterval(rescan, opts.rescanMs ?? 3000);
   let server: Awaited<ReturnType<typeof startEventServer>>;
   try {
-    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir(), version: opts.version, startedBy: opts.startedBy, onShutdown: opts.onShutdown });
+    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir(), version: opts.version, startedBy: opts.startedBy, onShutdown: opts.onShutdown, usage });
   } catch (err) {
     clearInterval(tick);
     clearInterval(rescanTimer);
+    usage?.close();
     watcher.close();
     throw err;
   }
@@ -311,6 +316,7 @@ export async function startApp(opts: { port?: number; token?: string; claudeDir?
     async close() {
       clearInterval(tick);
       clearInterval(rescanTimer);
+      usage?.close();
       watcher.close();
       await server.close();
     },

@@ -33,7 +33,7 @@ export type AgentOfficeSession = {
 /** one line of tracker status, shown before the first poll answers */
 export type AgentOfficeStatus = string
 /** the last `/state` the poll read, slimmed to what the pane draws */
-export type AgentOfficeSnapshot = { seq: number; tracker?: string; state: { sessions: Record<string, AgentOfficeSession> } } | null
+export type AgentOfficeSnapshot = { seq: number; tracker?: string; state: { sessions: Record<string, AgentOfficeSession> }; today?: { cost: number; tokens: number } } | null
 /** whether the last poll reached the tracker */
 export type AgentOfficeReach = 'unknown' | 'up' | 'down'
 /** the character whose chip was pressed: its details replace the rooms until "close" */

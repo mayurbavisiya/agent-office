@@ -185,3 +185,42 @@ details.billing .bill-note { margin-top: 3px; color: #888; }
 .chair--visitor.waiting .v-tag { opacity: 1; animation: visitor-tag 1.6s ease-in-out infinite; }
 @keyframes visitor-glow { 0%, 100% { opacity: .25 } 50% { opacity: .7 } }
 @keyframes visitor-tag { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-1.5px) } }
+
+/* usage bar: tokens and estimated cost across every session, above the rooms */
+:root { --usage-h: 40px; }
+#usage { position: absolute; top: 0; left: 0; right: 0; height: var(--usage-h); box-sizing: border-box; z-index: 6; display: flex; align-items: center; gap: 12px;
+  padding: 0 12px; background: #24212d; border-bottom: 1px solid #3b3648; color: #cbd5e1; font-size: 12px; white-space: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+#usage[hidden], #usage-details[hidden], .u-custom[hidden] { display: none; }
+#usage:not([hidden]) ~ #floor, #usage:not([hidden]) ~ #empty { top: var(--usage-h); }
+#usage:not([hidden]) ~ .panel { top: calc(var(--usage-h) + 12px); }
+#usage:not([hidden]) ~ #conn { top: calc(var(--usage-h) + 8px); }
+.u-ranges { display: flex; flex: none; background: #2f2b3a; border-radius: 8px; padding: 2px; }
+.u-ranges button { border: 0; background: transparent; color: #a8a3b8; font: inherit; font-weight: 600; padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+.u-ranges button:hover { color: #f1f5f9; }
+.u-ranges button[aria-pressed="true"] { background: #f59e0b; color: #1f1300; }
+.u-ranges button:focus-visible, #u-more:focus-visible, .u-custom input:focus-visible { outline: 2px solid #fbbf24; outline-offset: 1px; }
+.u-custom { display: flex; align-items: center; gap: 4px; flex: none; }
+.u-custom input { background: #2f2b3a; color: #e2e8f0; border: 1px solid #4a4458; border-radius: 6px; padding: 2px 4px; font: inherit; color-scheme: dark; }
+.u-stats { display: flex; align-items: baseline; gap: 14px; flex: 1; min-width: 0; }
+.u-stats b { color: #f8fafc; font-size: 13px; font-variant-numeric: tabular-nums; }
+.u-cost b { color: #fbbf24; font-size: 15px; }
+.u-note { color: #94a3b8; font-style: italic; }
+#u-more { flex: none; margin-left: auto; border: 1px solid #4a4458; background: transparent; color: #cbd5e1; font: inherit; padding: 3px 10px; border-radius: 6px; cursor: pointer; }
+#u-more:hover, #u-more[aria-expanded="true"] { background: #2f2b3a; color: #f8fafc; }
+#usage-details { position: absolute; top: var(--usage-h); right: 12px; z-index: 7; width: min(760px, calc(100% - 24px)); max-height: calc(100% - var(--usage-h) - 24px); overflow: auto; box-sizing: border-box;
+  margin-top: 6px; padding: 12px; background: #fff; color: #222; border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.35); font-size: 12px; }
+#usage-details table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+#usage-details th { text-align: right; color: #666; font-weight: 600; padding: 4px 6px; border-bottom: 1px solid #e5e5ea; position: sticky; top: -12px; background: #fff; }
+#usage-details td { text-align: right; padding: 3px 6px; white-space: nowrap; }
+#usage-details th:first-child, #usage-details td:first-child { text-align: left; }
+#usage-details .u-day td { font-weight: 600; border-top: 1px solid #f0f0f3; }
+#usage-details .u-model td { color: #666; font-size: 11px; }
+#usage-details .u-model td:first-child { padding-left: 16px; }
+#usage-details .u-total td { font-weight: 700; border-top: 2px solid #ddd; }
+#usage-details td:last-child { color: #b45309; }
+.u-fine { color: #777; margin: 8px 0 0; font-size: 11px; white-space: normal; }
+html.shell #usage { top: 18px; }
+html.shell #usage:not([hidden]) ~ #floor, html.shell #usage:not([hidden]) ~ #empty { top: calc(18px + var(--usage-h)); }
+html.shell #usage-details { top: calc(18px + var(--usage-h)); }
+@media (max-width: 720px) { .u-cache { display: none; } }
+@media (max-width: 520px) { .u-stats span:nth-child(3) { display: none; } #usage { gap: 8px; } }

@@ -386,26 +386,26 @@ var require_permessage_deflate = __commonJS({
             value = value[0];
             if (key === "client_max_window_bits") {
               if (value !== true) {
-                const num2 = +value;
-                if (!Number.isInteger(num2) || num2 < 8 || num2 > 15) {
+                const num3 = +value;
+                if (!Number.isInteger(num3) || num3 < 8 || num3 > 15) {
                   throw new TypeError(
                     `Invalid value for parameter "${key}": ${value}`
                   );
                 }
-                value = num2;
+                value = num3;
               } else if (!this._isServer) {
                 throw new TypeError(
                   `Invalid value for parameter "${key}": ${value}`
                 );
               }
             } else if (key === "server_max_window_bits") {
-              const num2 = +value;
-              if (!Number.isInteger(num2) || num2 < 8 || num2 > 15) {
+              const num3 = +value;
+              if (!Number.isInteger(num3) || num3 < 8 || num3 > 15) {
                 throw new TypeError(
                   `Invalid value for parameter "${key}": ${value}`
                 );
               }
-              value = num2;
+              value = num3;
             } else if (key === "client_no_context_takeover" || key === "server_no_context_takeover") {
               if (value !== true) {
                 throw new TypeError(
@@ -1119,8 +1119,8 @@ var require_receiver = __commonJS({
           return;
         }
         const buf = this.consume(8);
-        const num2 = buf.readUInt32BE(0);
-        if (num2 > Math.pow(2, 53 - 32) - 1) {
+        const num3 = buf.readUInt32BE(0);
+        if (num3 > Math.pow(2, 53 - 32) - 1) {
           const error = this.createError(
             RangeError,
             "Unsupported WebSocket frame: payload length > 2^53 - 1",
@@ -1131,7 +1131,7 @@ var require_receiver = __commonJS({
           cb(error);
           return;
         }
-        this._payloadLength = num2 * Math.pow(2, 32) + buf.readUInt32BE(4);
+        this._payloadLength = num3 * Math.pow(2, 32) + buf.readUInt32BE(4);
         this.haveLength(cb);
       }
       /**
@@ -3277,7 +3277,7 @@ var require_stream = __commonJS({
       };
       duplex._final = function(callback) {
         if (ws.readyState === ws.CONNECTING) {
-          ws.once("open", function open2() {
+          ws.once("open", function open3() {
             duplex._final(callback);
           });
           return;
@@ -3298,7 +3298,7 @@ var require_stream = __commonJS({
       };
       duplex._write = function(chunk, encoding, callback) {
         if (ws.readyState === ws.CONNECTING) {
-          ws.once("open", function open2() {
+          ws.once("open", function open3() {
             duplex._write(chunk, encoding, callback);
           });
           return;
@@ -3763,13 +3763,13 @@ var require_websocket_server = __commonJS({
 });
 
 // src/tracker/main.ts
-import { rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { rmSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { dirname as dirname2, join as join6 } from "node:path";
+import { dirname as dirname2, join as join7 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/core/app.ts
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/shared/config.ts
@@ -3835,9 +3835,302 @@ function claudeDir(env = process.env) {
 
 // src/server/eventServer.ts
 import { createServer } from "node:http";
+
+// src/core/usage.ts
+import { mkdirSync as mkdirSync2, readdirSync, readFileSync as readFileSync2, renameSync, statSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { open } from "node:fs/promises";
+import { join as join2 } from "node:path";
+
+// src/core/pricing.ts
+var MODELS = {
+  "claude-fable-5-2": { inputPerM: 8, outputPerM: 40, cacheReadPerM: 0.2, cacheWritePerM: 16, cacheWrite5mPerM: 10, contextSize: 1e6 },
+  "claude-fable-5-1": { inputPerM: 10, outputPerM: 50, cacheReadPerM: 0.25, cacheWritePerM: 20, cacheWrite5mPerM: 12.5, contextSize: 1e6 },
+  "claude-opus-5-5": { inputPerM: 4, outputPerM: 20, cacheReadPerM: 0.2, cacheWritePerM: 8, cacheWrite5mPerM: 5, contextSize: 1e6 },
+  "claude-sonnet-5-5": { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.1, cacheWritePerM: 4, cacheWrite5mPerM: 2.5, contextSize: 1e6 },
+  "claude-sonnet-4-6": { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 6, cacheWrite5mPerM: 3.75, contextSize: 1e6 },
+  "claude-haiku-5-5": {
+    inputPerM: 0.1,
+    outputPerM: 0.5,
+    cacheReadPerM: 0.01,
+    cacheWritePerM: 0.2,
+    cacheWrite5mPerM: 0.125,
+    contextSize: 1e6,
+    long: { over: 1e5, inputPerM: 0.5, outputPerM: 2.5, cacheReadPerM: 0.05, cacheWritePerM: 1, cacheWrite5mPerM: 0.625 }
+  }
+};
+function requestCost(model, u) {
+  const m = lookup(model);
+  if (!m) return null;
+  const prompt = u.input + u.cacheRead + u.write5m + u.write1h;
+  const p = m.long && prompt > m.long.over ? m.long : m;
+  return (u.input * p.inputPerM + u.output * p.outputPerM + u.cacheRead * p.cacheReadPerM + u.write5m * p.cacheWrite5mPerM + u.write1h * p.cacheWritePerM) / 1e6;
+}
+var lookup = (model) => model !== void 0 && Object.prototype.hasOwnProperty.call(MODELS, model) ? MODELS[model] : void 0;
+function contextSize(model) {
+  return lookup(model)?.contextSize;
+}
+
+// src/core/usage.ts
+var DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+var isObj = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+var num = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
+var pad = (n) => String(n).padStart(2, "0");
+function localDay(t) {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+var emptyTotals = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, unpricedTokens: 0, requests: 0 });
+var totalTokens = (t) => t.input + t.output + t.cacheRead + t.cacheWrite;
+function parseUsageLine(line, dayOf = localDay) {
+  if (!line.includes('"usage"')) return null;
+  let o;
+  try {
+    o = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!isObj(o) || o.type !== "assistant" || !isObj(o.message) || !isObj(o.message.usage)) return null;
+  const msg = o.message;
+  const u = msg.usage;
+  const model = typeof msg.model === "string" && msg.model ? msg.model : "unknown";
+  if (model === "<synthetic>") return null;
+  const t = typeof o.timestamp === "string" ? Date.parse(o.timestamp) : NaN;
+  if (!Number.isFinite(t)) return null;
+  const write = num(u.cache_creation_input_tokens);
+  const cc = isObj(u.cache_creation) ? u.cache_creation : {};
+  const write1h = Math.min(write, num(cc.ephemeral_1h_input_tokens));
+  const rec = {
+    day: dayOf(t),
+    model,
+    u: { input: num(u.input_tokens), output: num(u.output_tokens), cacheRead: num(u.cache_read_input_tokens), write5m: write - write1h, write1h }
+  };
+  if (typeof msg.id === "string" && msg.id) rec.key = `${msg.id}:${typeof o.requestId === "string" ? o.requestId : ""}`;
+  return rec;
+}
+function addRecord(days, r, sign = 1) {
+  const day = days[r.day] ??= {};
+  const t = day[r.model] ??= emptyTotals();
+  const { input, output, cacheRead, write5m, write1h } = r.u;
+  t.input += sign * input;
+  t.output += sign * output;
+  t.cacheRead += sign * cacheRead;
+  t.cacheWrite += sign * (write5m + write1h);
+  t.requests += sign;
+  const cost = requestCost(r.model, r.u);
+  if (cost === null) t.unpricedTokens += sign * (input + output + cacheRead + write5m + write1h);
+  else t.cost += sign * cost;
+}
+var recTokens = (r) => r.u.input + r.u.output + r.u.cacheRead + r.u.write5m + r.u.write1h;
+function takeRecord(days, seen, r) {
+  if (!r.key) {
+    addRecord(days, r);
+    return true;
+  }
+  const prev = seen.get(r.key);
+  if (prev && recTokens(r) <= recTokens(prev)) return false;
+  if (prev) addRecord(days, prev, -1);
+  addRecord(days, r);
+  seen.set(r.key, r);
+  return true;
+}
+function mergeDays(saved, scanned) {
+  const out = {};
+  for (const src of [saved, scanned]) {
+    for (const [day, models] of Object.entries(src)) {
+      for (const [model, t] of Object.entries(models)) {
+        const cur = out[day]?.[model];
+        if (!cur || totalTokens(t) > totalTokens(cur)) (out[day] ??= {})[model] = { ...t };
+      }
+    }
+  }
+  return out;
+}
+function addInto(a, b) {
+  a.input += b.input;
+  a.output += b.output;
+  a.cacheRead += b.cacheRead;
+  a.cacheWrite += b.cacheWrite;
+  a.cost += b.cost;
+  a.unpricedTokens += b.unpricedTokens;
+  a.requests += b.requests;
+}
+function summarize(days, from, to) {
+  const total = emptyTotals();
+  const models = {};
+  const rows = [];
+  for (const day of Object.keys(days).sort()) {
+    if (day < from || day > to) continue;
+    const dt = emptyTotals();
+    const dm = {};
+    for (const [model, t] of Object.entries(days[day])) {
+      addInto(dt, t);
+      addInto(models[model] ??= emptyTotals(), t);
+      dm[model] = { ...t };
+    }
+    addInto(total, dt);
+    rows.push({ day, total: dt, models: dm });
+  }
+  return { from, to, total, models, days: rows };
+}
+function parseSaved(text) {
+  try {
+    const v = JSON.parse(text);
+    if (!isObj(v) || !isObj(v.days)) return {};
+    const out = {};
+    for (const [day, models] of Object.entries(v.days)) {
+      if (!DAY_RE.test(day) || !isObj(models)) continue;
+      for (const [model, t] of Object.entries(models)) {
+        if (!isObj(t)) continue;
+        (out[day] ??= {})[model] = {
+          input: num(t.input),
+          output: num(t.output),
+          cacheRead: num(t.cacheRead),
+          cacheWrite: num(t.cacheWrite),
+          cost: num(t.cost),
+          unpricedTokens: num(t.unpricedTokens),
+          requests: num(t.requests)
+        };
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+var CHUNK = 4 * 1024 * 1024;
+function listLogs(dir2, depth = 8) {
+  let names;
+  try {
+    names = readdirSync(dir2);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const n of names) {
+    const p = join2(dir2, n);
+    if (n.endsWith(".jsonl")) out.push(p);
+    else if (depth > 0 && !n.includes(".")) out.push(...listLogs(p, depth - 1));
+  }
+  return out;
+}
+var UsageLedger = class {
+  constructor(projectsDir, savePath, pollMs = 3e4) {
+    this.projectsDir = projectsDir;
+    this.savePath = savePath;
+    this.pollMs = pollMs;
+    let text = "";
+    try {
+      text = readFileSync2(savePath, "utf8");
+    } catch {
+    }
+    this.saved = parseSaved(text);
+  }
+  projectsDir;
+  savePath;
+  pollMs;
+  scanned = {};
+  saved;
+  offsets = /* @__PURE__ */ new Map();
+  seen = /* @__PURE__ */ new Map();
+  timer;
+  running;
+  dirty = false;
+  closed = false;
+  scanning = true;
+  /** Starts the first full read; resolves when it is done. */
+  start() {
+    const first = this.poll().finally(() => {
+      this.scanning = false;
+    });
+    this.timer = setInterval(() => void this.poll(), this.pollMs);
+    this.timer.unref?.();
+    return first;
+  }
+  days() {
+    return mergeDays(this.saved, this.scanned);
+  }
+  summary(from, to) {
+    return summarize(this.days(), from, to);
+  }
+  close() {
+    this.closed = true;
+    if (this.timer) clearInterval(this.timer);
+    if (this.dirty) this.save();
+  }
+  /** One pass over the logs; passes never overlap. */
+  poll() {
+    if (!this.running) {
+      this.running = this.pass().finally(() => {
+        this.running = void 0;
+      });
+    }
+    return this.running;
+  }
+  async pass() {
+    for (const path of listLogs(this.projectsDir)) {
+      if (this.closed) return;
+      let size;
+      try {
+        size = statSync(path).size;
+      } catch {
+        continue;
+      }
+      const from = this.offsets.get(path) ?? 0;
+      if (size < from) this.offsets.set(path, 0);
+      if (size > (this.offsets.get(path) ?? 0)) await this.readFrom(path, this.offsets.get(path) ?? 0, size);
+    }
+    if (this.dirty) this.save();
+  }
+  /** Reads complete lines from `start` up to `end`; a partial last line waits for the next pass. */
+  async readFrom(path, start, end) {
+    let fh;
+    try {
+      fh = await open(path, "r");
+    } catch {
+      return;
+    }
+    try {
+      let pos = start;
+      let carry = "";
+      while (pos < end) {
+        const buf = Buffer.alloc(Math.min(CHUNK, end - pos));
+        const { bytesRead } = await fh.read(buf, 0, buf.length, pos);
+        if (bytesRead <= 0) break;
+        pos += bytesRead;
+        const text = carry + buf.toString("utf8", 0, bytesRead);
+        const lines = text.split("\n");
+        carry = lines.pop() ?? "";
+        for (const line of lines) this.take(line);
+        await new Promise((r) => setImmediate(r));
+      }
+      this.offsets.set(path, pos - Buffer.byteLength(carry, "utf8"));
+    } finally {
+      await fh.close();
+    }
+  }
+  take(line) {
+    const r = parseUsageLine(line);
+    if (!r) return;
+    if (takeRecord(this.scanned, this.seen, r)) this.dirty = true;
+  }
+  save() {
+    this.dirty = false;
+    try {
+      const days = this.days();
+      this.saved = days;
+      mkdirSync2(join2(this.savePath, ".."), { recursive: true, mode: 448 });
+      const tmp = `${this.savePath}.tmp`;
+      writeFileSync2(tmp, JSON.stringify({ version: 1, days }), { mode: 384 });
+      renameSync(tmp, this.savePath);
+    } catch {
+    }
+  }
+};
+
+// src/server/eventServer.ts
 import { createHash, timingSafeEqual } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { extname, join as join2, resolve, sep } from "node:path";
+import { extname, join as join3, resolve, sep } from "node:path";
 
 // node_modules/ws/wrapper.mjs
 var import_stream = __toESM(require_stream(), 1);
@@ -3950,7 +4243,21 @@ function startEventServer(opts) {
   }
   function handleState(req, res) {
     if (!tokenOk(req.headers["x-agent-office-token"], token)) return reply(res, 401, "unauthorized");
-    reply(res, 200, JSON.stringify({ version: version2, startedBy: startedBy2, startedAt, seq, state: store.snapshot() }), { "Content-Type": "application/json; charset=utf-8" });
+    const body = { version: version2, startedBy: startedBy2, startedAt, seq, state: store.snapshot() };
+    if (opts.usage && !opts.usage.scanning) {
+      const day = localDay(Date.now());
+      const t = opts.usage.summary(day, day).total;
+      body.usage = { today: { cost: t.cost, tokens: totalTokens(t) } };
+    }
+    reply(res, 200, JSON.stringify(body), { "Content-Type": "application/json; charset=utf-8" });
+  }
+  function handleUsage(req, res, url) {
+    if (!tokenOk(req.headers["x-agent-office-token"], token)) return reply(res, 401, "unauthorized");
+    if (!opts.usage) return reply(res, 404, "usage not available");
+    const from = url.searchParams.get("from") ?? "";
+    const to = url.searchParams.get("to") ?? "";
+    if (!DAY_RE.test(from) || !DAY_RE.test(to) || from > to) return reply(res, 400, "from and to must be YYYY-MM-DD, from <= to");
+    reply(res, 200, JSON.stringify({ scanning: opts.usage.scanning, ...opts.usage.summary(from, to) }), { "Content-Type": "application/json; charset=utf-8" });
   }
   function handleShutdown(req, res) {
     req.resume();
@@ -3968,10 +4275,10 @@ function startEventServer(opts) {
       return reply(res, 400, "bad path");
     }
     if (rel.includes("\0")) return reply(res, 400, "bad path");
-    let file = resolve(join2(root, rel));
+    let file = resolve(join3(root, rel));
     if (file !== root && !file.startsWith(root + sep)) return reply(res, 403, "forbidden");
     try {
-      if ((await stat(file)).isDirectory()) file = join2(file, "index.html");
+      if ((await stat(file)).isDirectory()) file = join3(file, "index.html");
       const data = await readFile(file);
       reply(res, 200, req.method === "HEAD" ? "" : data, { "Content-Type": MIME[extname(file).toLowerCase()] ?? "application/octet-stream" });
     } catch {
@@ -3991,6 +4298,7 @@ function startEventServer(opts) {
       }
       if (req.method !== "GET" && req.method !== "HEAD") return reply(res, 405, "method not allowed");
       if (url.pathname === "/state") return handleState(req, res);
+      if (url.pathname === "/usage") return handleUsage(req, res, url);
       void handleStatic(req, res, url.pathname);
     } catch {
       if (!res.headersSent) reply(res, 400, "bad request");
@@ -4050,25 +4358,25 @@ function startEventServer(opts) {
 
 // src/core/discovery.ts
 import { execFileSync } from "node:child_process";
-import { closeSync, openSync, readFileSync as readFileSync2, readSync, readdirSync, statSync } from "node:fs";
+import { closeSync, openSync, readFileSync as readFileSync3, readSync, readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { basename, dirname, join as join3 } from "node:path";
+import { basename, dirname, join as join4 } from "node:path";
 function subagentLogPath(_claudeDir, transcriptPath, agentId) {
-  const sessionDir = join3(dirname(transcriptPath), basename(transcriptPath).replace(/\.jsonl$/, ""));
-  return join3(sessionDir, "subagents", `agent-${agentId}.jsonl`);
+  const sessionDir = join4(dirname(transcriptPath), basename(transcriptPath).replace(/\.jsonl$/, ""));
+  return join4(sessionDir, "subagents", `agent-${agentId}.jsonl`);
 }
 var STALE_AGENT_MS = 6e5;
 function readMeta(logPath) {
   const out = { finished: false };
   try {
-    const o = JSON.parse(readFileSync2(logPath.replace(/\.jsonl$/, ".meta.json"), "utf8"));
+    const o = JSON.parse(readFileSync3(logPath.replace(/\.jsonl$/, ".meta.json"), "utf8"));
     if (typeof o !== "object" || o === null) return out;
     out.hasMeta = true;
     const m = o;
     if ("finished" in m) out.finished = m.finished === true;
     else {
       try {
-        out.finished = Date.now() - statSync(logPath).mtimeMs >= STALE_AGENT_MS;
+        out.finished = Date.now() - statSync2(logPath).mtimeMs >= STALE_AGENT_MS;
       } catch {
         out.finished = false;
       }
@@ -4082,14 +4390,14 @@ function readMeta(logPath) {
 }
 var safeReaddir = (p) => {
   try {
-    return readdirSync(p);
+    return readdirSync2(p);
   } catch {
     return [];
   }
 };
 function listSubagentFiles(mainLog) {
-  const subDir = join3(dirname(mainLog), basename(mainLog).replace(/\.jsonl$/, ""), "subagents");
-  return safeReaddir(subDir).map((f) => /^agent-(.+)\.jsonl$/.exec(f)).filter((m) => m !== null).map((m) => ({ agentId: m[1], path: join3(subDir, m[0]) }));
+  const subDir = join4(dirname(mainLog), basename(mainLog).replace(/\.jsonl$/, ""), "subagents");
+  return safeReaddir(subDir).map((f) => /^agent-(.+)\.jsonl$/.exec(f)).filter((m) => m !== null).map((m) => ({ agentId: m[1], path: join4(subDir, m[0]) }));
 }
 var subagentsOf = (mainLog) => listSubagentFiles(mainLog).map((a) => {
   const { hasMeta: _h, ...meta } = readMeta(a.path);
@@ -4134,10 +4442,10 @@ function forgetPid(pid) {
   for (const k of startCache.keys()) if (k.startsWith(prefix)) startCache.delete(k);
 }
 function readRegistry(claudeDir2) {
-  const dir2 = join3(claudeDir2, "sessions");
+  const dir2 = join4(claudeDir2, "sessions");
   let files;
   try {
-    files = readdirSync(dir2);
+    files = readdirSync2(dir2);
   } catch {
     return null;
   }
@@ -4147,7 +4455,7 @@ function readRegistry(claudeDir2) {
   for (const f of files) {
     if (!f.endsWith(".json")) continue;
     try {
-      const o = JSON.parse(readFileSync2(join3(dir2, f), "utf8"));
+      const o = JSON.parse(readFileSync3(join4(dir2, f), "utf8"));
       parsed++;
       if (typeof o !== "object" || o === null || Array.isArray(o)) continue;
       const m = o;
@@ -4180,21 +4488,21 @@ function readRegistry(claudeDir2) {
   return parsed > 0 && wellFormed === 0 ? null : out;
 }
 function findMainLog(claudeDir2, sessionId, cwd) {
-  const projects = join3(claudeDir2, "projects");
+  const projects = join4(claudeDir2, "projects");
   const file = `${sessionId}.jsonl`;
   const isFile = (p) => {
     try {
-      return statSync(p).isFile();
+      return statSync2(p).isFile();
     } catch {
       return false;
     }
   };
   if (cwd) {
-    const p = join3(projects, cwd.replace(/[^a-zA-Z0-9]/g, "-"), file);
+    const p = join4(projects, cwd.replace(/[^a-zA-Z0-9]/g, "-"), file);
     if (isFile(p)) return p;
   }
   for (const slug of safeReaddir(projects)) {
-    const p = join3(projects, slug, file);
+    const p = join4(projects, slug, file);
     if (isFile(p)) return p;
   }
   return void 0;
@@ -4258,14 +4566,14 @@ function sessionFromLog(sessionId, mainLog) {
 }
 function recentMainLogs(claudeDir2, now, windowMs = 6e5) {
   const out = [];
-  const projects = join3(claudeDir2, "projects");
+  const projects = join4(claudeDir2, "projects");
   for (const slug of safeReaddir(projects)) {
-    const projDir = join3(projects, slug);
+    const projDir = join4(projects, slug);
     for (const name of safeReaddir(projDir)) {
       if (!name.endsWith(".jsonl")) continue;
-      const mainLog = join3(projDir, name);
+      const mainLog = join4(projDir, name);
       try {
-        const st = statSync(mainLog);
+        const st = statSync2(mainLog);
         if (!st.isFile() || now - st.mtimeMs > windowMs) continue;
       } catch {
         continue;
@@ -4278,33 +4586,21 @@ function recentMainLogs(claudeDir2, now, windowMs = 6e5) {
 
 // src/core/logWatcher.ts
 import { EventEmitter } from "node:events";
-import { statSync as statSync2 } from "node:fs";
-import { open, stat as stat2 } from "node:fs/promises";
+import { statSync as statSync3 } from "node:fs";
+import { open as open2, stat as stat2 } from "node:fs/promises";
 import { StringDecoder as StringDecoder2 } from "node:string_decoder";
-
-// src/core/pricing.ts
-var MODELS = {
-  "claude-fable-5-2": { inputPerM: 8, outputPerM: 40, cacheReadPerM: 0.2, cacheWritePerM: 16, contextSize: 1e6 },
-  "claude-opus-5-5": { inputPerM: 4, outputPerM: 20, cacheReadPerM: 0.2, cacheWritePerM: 8, contextSize: 1e6 },
-  "claude-sonnet-5-5": { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.1, cacheWritePerM: 4, contextSize: 1e6 },
-  "claude-haiku-5-5": { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01, cacheWritePerM: 0.2, contextSize: 1e6 }
-};
-var lookup = (model) => model !== void 0 && Object.prototype.hasOwnProperty.call(MODELS, model) ? MODELS[model] : void 0;
-function contextSize(model) {
-  return lookup(model)?.contextSize;
-}
 
 // src/core/logParser.ts
 var MAX_RECENT = 20;
 var MAX_FILES = 200;
 var MAX_SEEN = 50;
-var isObj = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
-var num = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
+var isObj2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+var num2 = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
 function parseLogLine(line) {
   try {
     if (!line || !line.trim()) return null;
     const obj = JSON.parse(line);
-    if (!isObj(obj) || obj.type !== "assistant" || !isObj(obj.message)) return null;
+    if (!isObj2(obj) || obj.type !== "assistant" || !isObj2(obj.message)) return null;
     const msg = obj.message;
     const d = { toolUses: [] };
     let relevant = false;
@@ -4319,22 +4615,22 @@ function parseLogLine(line) {
       relevant = true;
     }
     if (typeof msg.id === "string" && msg.id) d.messageId = msg.id;
-    if (isObj(msg.usage)) {
+    if (isObj2(msg.usage)) {
       const u = msg.usage;
       if (["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"].some((k) => typeof u[k] === "number")) {
         d.usage = {
-          input: num(u.input_tokens),
-          output: num(u.output_tokens),
-          cacheRead: num(u.cache_read_input_tokens),
-          cacheWrite: num(u.cache_creation_input_tokens)
+          input: num2(u.input_tokens),
+          output: num2(u.output_tokens),
+          cacheRead: num2(u.cache_read_input_tokens),
+          cacheWrite: num2(u.cache_creation_input_tokens)
         };
         relevant = true;
       }
     }
     if (Array.isArray(msg.content)) {
       for (const b of msg.content) {
-        if (isObj(b) && b.type === "tool_use" && typeof b.name === "string") {
-          d.toolUses.push({ name: b.name, input: isObj(b.input) ? b.input : {} });
+        if (isObj2(b) && b.type === "tool_use" && typeof b.name === "string") {
+          d.toolUses.push({ name: b.name, input: isObj2(b.input) ? b.input : {} });
           relevant = true;
         }
       }
@@ -4385,7 +4681,7 @@ function applyDelta(stats, d) {
 }
 
 // src/core/logWatcher.ts
-var CHUNK = 64 * 1024;
+var CHUNK2 = 64 * 1024;
 var MAX_LINE = 1024 * 1024;
 var LogWatcher = class extends EventEmitter {
   constructor(intervalMs = 1e3) {
@@ -4402,7 +4698,7 @@ var LogWatcher = class extends EventEmitter {
     let offset = 0;
     if (!opts?.fromStart) {
       try {
-        offset = statSync2(path).size;
+        offset = statSync3(path).size;
       } catch {
         offset = 0;
       }
@@ -4449,11 +4745,11 @@ var LogWatcher = class extends EventEmitter {
         t.skipping = false;
       }
       if (size === t.offset) return;
-      const fh = await open(t.path, "r");
+      const fh = await open2(t.path, "r");
       try {
-        const buf = Buffer.alloc(CHUNK);
+        const buf = Buffer.alloc(CHUNK2);
         while (t.offset < size && this.tails.get(t.path) === t) {
-          const { bytesRead } = await fh.read(buf, 0, Math.min(CHUNK, size - t.offset), t.offset);
+          const { bytesRead } = await fh.read(buf, 0, Math.min(CHUNK2, size - t.offset), t.offset);
           if (bytesRead === 0) break;
           t.offset += bytesRead;
           this.consume(t, t.decoder.write(buf.subarray(0, bytesRead)));
@@ -4508,7 +4804,7 @@ var MAX_OPEN_TOOLS = 50;
 var RUNNING = /* @__PURE__ */ new Set(["spawning", "working", "quiet"]);
 var NEEDS_YOU_TYPES = /* @__PURE__ */ new Set(["permission_prompt", "elicitation_dialog"]);
 var MAX_REPLACED = 200;
-var isObj2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+var isObj3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 var str = (v) => typeof v === "string" && v ? v : void 0;
 function labelFor(cwd) {
   const parts = cwd.split(/[\\/]+/).filter(Boolean);
@@ -4646,7 +4942,7 @@ var OfficeStore = class {
   }
   applyHook(e, now) {
     const out = [];
-    if (!isObj2(e)) return out;
+    if (!isObj3(e)) return out;
     try {
       this.handleHook(e, now, out);
       this.refreshSubLabels();
@@ -4670,7 +4966,7 @@ var OfficeStore = class {
   }
   applyLog(sessionId, agentId, d, now) {
     const out = [];
-    if (!str(sessionId) || !isObj2(d) || this.replaced.has(sessionId)) return;
+    if (!str(sessionId) || !isObj3(d) || this.replaced.has(sessionId)) return;
     try {
       const delta = { ...d, toolUses: Array.isArray(d.toolUses) ? d.toolUses : [] };
       let sid = sessionId;
@@ -4962,8 +5258,8 @@ var OfficeStore = class {
     return a;
   }
   claim(m, agentType) {
-    const open2 = m.pending.filter((p) => !p.claimedBy);
-    return open2.find((p) => (p.subagentType ?? "general-purpose") === agentType) ?? open2[0];
+    const open3 = m.pending.filter((p) => !p.claimedBy);
+    return open3.find((p) => (p.subagentType ?? "general-purpose") === agentType) ?? open3[0];
   }
   agentActivity(s, m, id, e, now, out) {
     const a = this.ensureAgent(s, m, id, now, out, { type: str(e.agent_type), claim: true });
@@ -4973,7 +5269,7 @@ var OfficeStore = class {
   recordPending(m, e, callerId) {
     const toolUseId = str(e.tool_use_id);
     if (!toolUseId || m.pending.some((p) => p.toolUseId === toolUseId)) return;
-    const input = isObj2(e.tool_input) ? e.tool_input : {};
+    const input = isObj3(e.tool_input) ? e.tool_input : {};
     m.pending.push({
       toolUseId,
       parentId: callerId ?? null,
@@ -4986,7 +5282,7 @@ var OfficeStore = class {
   /** PostToolUse(Agent).tool_response.agentId is the authoritative tool_use_id → agent link (hook-notes §2). */
   linkFromPostToolUse(s, m, e, now, out) {
     const resp = e.tool_response;
-    const agentId = isObj2(resp) ? str(resp.agentId) : void 0;
+    const agentId = isObj3(resp) ? str(resp.agentId) : void 0;
     const toolUseId = str(e.tool_use_id);
     if (!agentId || m.retired.has(agentId)) return;
     const p = toolUseId ? m.pending.find((x) => x.toolUseId === toolUseId) : void 0;
@@ -5007,7 +5303,7 @@ var OfficeStore = class {
   adoptBackgroundTasks(s, m, e, now, out) {
     if (!Array.isArray(e.background_tasks)) return;
     for (const t of e.background_tasks) {
-      if (!isObj2(t)) continue;
+      if (!isObj3(t)) continue;
       const id = str(t.id);
       if (!id || s.agents[id] || t.status !== "running" || t.type !== void 0 && t.type !== "subagent") continue;
       this.ensureAgent(s, m, id, now, out, { type: str(t.agent_type), task: str(t.description) });
@@ -5030,7 +5326,7 @@ var OfficeStore = class {
 
 // src/core/app.ts
 var RUNNING2 = /* @__PURE__ */ new Set(["spawning", "working", "quiet"]);
-var defaultStaticDir = () => join4(fileURLToPath(new URL("../..", import.meta.url)), "dist", "scene");
+var defaultStaticDir = () => join5(fileURLToPath(new URL("../..", import.meta.url)), "dist", "scene");
 async function startApp(opts = {}) {
   const cfg = opts.port !== void 0 && opts.token !== void 0 ? { port: opts.port, token: opts.token } : loadOrCreateConfig(opts.configDir);
   const port = opts.port ?? cfg.port;
@@ -5234,13 +5530,16 @@ async function startApp(opts = {}) {
     return out;
   };
   const tick = setInterval(() => store.tick(Date.now()), 1e3);
+  const usage = opts.configDir !== void 0 ? new UsageLedger(join5(cdir, "projects"), join5(opts.configDir, "usage.json")) : void 0;
+  void usage?.start();
   const rescanTimer = setInterval(rescan, opts.rescanMs ?? 3e3);
   let server;
   try {
-    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir(), version: opts.version, startedBy: opts.startedBy, onShutdown: opts.onShutdown });
+    server = await startEventServer({ port, token, store, staticDir: opts.staticDir ?? defaultStaticDir(), version: opts.version, startedBy: opts.startedBy, onShutdown: opts.onShutdown, usage });
   } catch (err) {
     clearInterval(tick);
     clearInterval(rescanTimer);
+    usage?.close();
     watcher.close();
     throw err;
   }
@@ -5252,6 +5551,7 @@ async function startApp(opts = {}) {
     async close() {
       clearInterval(tick);
       clearInterval(rescanTimer);
+      usage?.close();
       watcher.close();
       await server.close();
     }
@@ -5264,16 +5564,16 @@ function shouldIdleExit(now, lastBusyAt2, idleMin2) {
 }
 
 // src/tracker/log.ts
-import { appendFileSync, mkdirSync as mkdirSync2, renameSync, statSync as statSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { appendFileSync, mkdirSync as mkdirSync3, renameSync as renameSync2, statSync as statSync4 } from "node:fs";
+import { join as join6 } from "node:path";
 var MAX_LOG_BYTES = 1024 * 1024;
 function makeLogger(dir2) {
-  const file = join5(dir2, "tracker.log");
+  const file = join6(dir2, "tracker.log");
   return (...parts) => {
     try {
-      mkdirSync2(dir2, { recursive: true, mode: 448 });
+      mkdirSync3(dir2, { recursive: true, mode: 448 });
       try {
-        if (statSync3(file).size >= MAX_LOG_BYTES) renameSync(file, `${file}.1`);
+        if (statSync4(file).size >= MAX_LOG_BYTES) renameSync2(file, `${file}.1`);
       } catch {
       }
       appendFileSync(file, `${(/* @__PURE__ */ new Date()).toISOString()} ${parts.map(String).join(" ")}
@@ -5284,18 +5584,18 @@ function makeLogger(dir2) {
 }
 
 // src/tracker/main.ts
-var version = true ? "0.1.3" : "0.0.0";
+var version = true ? "0.1.4" : "0.0.0";
 function flag(name) {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : void 0;
 }
-var dir = process.env.AGENT_OFFICE_DIR || join6(homedir2(), ".agent-office");
+var dir = process.env.AGENT_OFFICE_DIR || join7(homedir2(), ".agent-office");
 var log = makeLogger(dir);
 var given = flag("started-by");
 var startedBy = given === "plugin" || given === "app" ? given : "serve";
 var idleMin = Number(flag("idle-exit-min") ?? 30);
-var staticDir = join6(dirname2(fileURLToPath2(import.meta.url)), "scene");
-var pidFile = join6(dir, "tracker.pid");
+var staticDir = join7(dirname2(fileURLToPath2(import.meta.url)), "scene");
+var pidFile = join7(dir, "tracker.pid");
 var app;
 try {
   app = await startApp({ configDir: dir, staticDir, version, startedBy, onShutdown: () => stop("POST /shutdown") });
@@ -5305,7 +5605,7 @@ try {
   log("startApp failed", msg);
   process.exit(1);
 }
-writeFileSync2(pidFile, String(process.pid), { mode: 384 });
+writeFileSync3(pidFile, String(process.pid), { mode: 384 });
 log(`tracker ${version} started by ${startedBy} at ${app.url}`);
 var lastBusyAt = Date.now();
 var stopping = false;

@@ -12,6 +12,7 @@ import { renderCharacter } from './characters.js';
 import type { OfficeState } from '../shared/types.js';
 import { animStats, planAnimations, ROOM_FADED_EVENT, runAnimations } from './animator.js';
 import { roomTitle } from './layout.js';
+import { UsageBar } from './usageBar.js';
 
 const viewport = document.getElementById('floor') as HTMLElement;
 const svg = document.getElementById('office') as unknown as SVGSVGElement;
@@ -37,6 +38,10 @@ if (shell) {
 }
 const strip = document.getElementById('strip') as HTMLElement;
 strip.hidden = !compact;
+// usage across every session, at the top of the full office (not in the compact strip)
+const usageEl = document.getElementById('usage') as HTMLElement;
+if (compact || !token) usageEl.hidden = true;
+else new UsageBar(usageEl, document.getElementById('usage-details') as HTMLElement, token);
 
 
 const panelEl = document.getElementById('panel') as HTMLElement;

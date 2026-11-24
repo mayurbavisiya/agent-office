@@ -40,7 +40,7 @@ export type PxSession = {
 };
 export type PxState = { sessions: Record<string, PxSession> };
 /** `tracker`: which tracker run answered (`<version>@<startedAt>`), so a restart that resets `seq` still reads as new. */
-export type Snapshot = { seq: number; tracker?: string; state: PxState };
+export type Snapshot = { seq: number; tracker?: string; state: PxState; today?: { cost: number; tokens: number } };
 
 export type AnimEvent = { kind: 'spawn' | 'handoff' | 'exit'; sessionId: string; agentId: string };
 /** An animation in flight: the event, the frame it began on, the walker's colour and desk slot. */
@@ -89,8 +89,10 @@ export const TYPE_COLORS: Record<string, number> = {
 /** USD per million tokens [input, output, cache read, cache write], as src/core/pricing.ts MODELS. */
 export const PRICES: Record<string, [number, number, number, number]> = {
   'claude-fable-5-2': [8, 40, 0.2, 16],
+  'claude-fable-5-1': [10, 50, 0.25, 20],
   'claude-opus-5-5': [4, 20, 0.2, 8],
   'claude-sonnet-5-5': [2, 10, 0.1, 4],
+  'claude-sonnet-4-6': [3, 15, 0.3, 6],
   'claude-haiku-5-5': [0.1, 0.5, 0.01, 0.2],
 };
 
@@ -233,7 +235,19 @@ export function parseSnapshot(body: unknown): Snapshot | null {
     if (s) sessions[s.id] = s;
   }
   const version = typeof body.version === 'string' ? body.version : '';
-  return { seq: num(body.seq), tracker: `${version}@${num(body.startedAt)}`, state: { sessions } };
+  const snap: Snapshot = { seq: num(body.seq), tracker: `${version}@${num(body.startedAt)}`, state: { sessions } };
+  const today = isRec(body.usage) && isRec(body.usage.today) ? body.usage.today : undefined;
+  if (today) snap.today = { cost: num(today.cost), tokens: num(today.tokens) };
+  return snap;
+}
+
+/** "today · ~$212.95 · 509.1M tokens across all sessions", from a snapshot's usage, or '' without it. */
+export function todayLine(today: Snapshot['today']): string {
+  if (!today) return '';
+  const t = today.tokens;
+  const tok = t >= 1e9 ? `${(t / 1e9).toFixed(2)}B` : t >= 1e7 ? `${(t / 1e6).toFixed(1)}M` : t >= 1e6 ? `${(t / 1e6).toFixed(2)}M` : t >= 1e3 ? `${(t / 1e3).toFixed(1)}k` : String(Math.round(t));
+  const cost = today.cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `today · ~$${cost} est. · ${tok} tokens across all sessions`;
 }
 
 // ---- diffs and animations ----

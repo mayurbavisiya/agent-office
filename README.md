@@ -23,6 +23,7 @@ A panel opens beside the chat. You need Node 20 or newer on your PATH. Tested on
 ## What the panel shows
 
 - One room per Claude Code session, with a pixel person for each agent.
+- A usage bar across the top of the browser office: tokens and estimated cost across all your Claude Code sessions for today, this week (from Monday), this month, or a custom date range. "Details" opens a table with a row per day and per model (input, output, cache write, cache read, total, cost), like `ccusage`. The panel in Claude shows a "today" line.
 - A visitor chair at the main agent's desk: it lights up amber with "your turn" when the session is waiting on you (a permission prompt, a question, or your reply). The browser tab title counts those rooms, e.g. "(2) Agent Office", and the panel in Claude marks them "▶ your turn".
 - Name chips under the rooms. Press a chip to open that agent's details (type, task, status, tokens, estimated cost, running time and last activity). Press close to go back.
 - "+N more" in the room view when there are more rooms than fit, and "+N" at the end of the chip row when there are more chips than fit.
@@ -77,15 +78,17 @@ Everything lives in `~/.agent-office/` (override the folder with the `AGENT_OFFI
 
 - `config.json` holds the server port (default 47821) and a random token. It is created on first run with mode 0600. If the port is taken, edit it here.
 - `window.json` remembers the window position, size, opacity, always-on-top and compact settings.
+- `usage.json` keeps daily token and cost totals per model (no prompts or file names). Claude Code deletes its own logs after 30 days by default, so this file is what lets the usage bar show older ranges.
 
 ## Privacy
 
-Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only. The hook event endpoint, the `/state` endpoint and the live connection the office window uses all require the token from `config.json` (the plugin sends it in a header, never on the command line); the office page's static files are served without it. The `/office` link contains the token, so treat it like a password. The `/office` reply is shown to you only: the model never reads it, so `/office` uses no tokens. The transcript row still holds the link. The `.key` files in the session registry are never read.
+Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only. The hook event endpoint, the `/state` and `/usage` endpoints and the live connection the office window uses all require the token from `config.json` (the plugin sends it in a header, never on the command line); the office page's static files are served without it. The `/office` link contains the token, so treat it like a password. The `/office` reply is shown to you only: the model never reads it, so `/office` uses no tokens. The transcript row still holds the link. The `.key` files in the session registry are never read.
 
 ## Known limits
 
 - The panel details and session discovery rely on Claude Code's internal, undocumented files (the logs under `projects/` and the session registry). A Claude Code update could change them. Hooks keep working, but some details might go blank.
-- Cost is an estimate, not a bill.
+- Cost is an estimate, not a bill: it uses Anthropic's API prices (5-minute and 1-hour cache writes priced separately). On a Pro or Max plan you pay a flat subscription, so read it as what the same usage would cost pay-per-token. Tokens from a model without a price are counted but left out of the cost.
+- Usage history starts with what Claude Code's logs still hold (30 days by default) and grows from there.
 - The tracker needs Node 20+. Without it, `/office` cannot start one.
 - A signed, notarized app with auto-update is planned. For now you run it from source.
 

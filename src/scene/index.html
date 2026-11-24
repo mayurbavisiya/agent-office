@@ -10,6 +10,21 @@
 <body>
   <div id="dragbar" hidden><span>Agent Office</span><button id="hide-btn" type="button" title="Hide to tray" aria-label="Hide to tray">✕</button></div>
   <div id="strip" hidden></div>
+  <header id="usage" aria-label="Claude Code usage">
+    <div class="u-ranges" role="group" aria-label="Range">
+      <button type="button" data-range="today">Today</button><button type="button" data-range="week">Week</button><button type="button" data-range="month">Month</button><button type="button" data-range="custom">Custom</button>
+    </div>
+    <span class="u-custom" hidden><input type="date" id="u-from" aria-label="From"><span aria-hidden="true">→</span><input type="date" id="u-to" aria-label="To"></span>
+    <div class="u-stats" aria-live="polite">
+      <span class="u-cost" title="What this usage would cost at Anthropic API prices"><b id="u-cost">—</b> est. cost</span>
+      <span title="All tokens processed, cache reads included"><b id="u-tok">—</b> tokens</span>
+      <span title="Output tokens the models wrote"><b id="u-out">—</b> written</span>
+      <span class="u-cache"><b id="u-cw">—</b> cache write · <b id="u-cr">—</b> cache read</span>
+      <span id="u-note" class="u-note"></span>
+    </div>
+    <button type="button" id="u-more" aria-expanded="false" aria-controls="usage-details">Details ▾</button>
+  </header>
+  <div id="usage-details" hidden></div>
   <div id="floor">
     <svg id="office" xmlns="http://www.w3.org/2000/svg" width="0" height="0" font-family="system-ui,-apple-system,sans-serif">
       <defs>

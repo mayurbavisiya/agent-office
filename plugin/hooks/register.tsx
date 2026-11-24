@@ -16,6 +16,7 @@ import {
   isMoving,
   layoutPanel,
   parseSnapshot,
+  todayLine,
   renderFrame,
   startAnims,
   textRooms,
@@ -351,7 +352,7 @@ async function pollOnce($: Engine): Promise<void> {
       const wrote = await update($, reach, () => r).then(() => true, () => false)
       lastReach = wrote ? r : undefined
     }
-    const key = snap ? `${snap.tracker ?? ''}#${snap.seq}` : undefined
+    const key = snap ? `${snap.tracker ?? ''}#${snap.seq}#${snap.today?.cost.toFixed(2) ?? ''}` : undefined
     if (snap && key !== lastKey) {
       const wrote = await update($, snapshot, () => snap).then(() => true, () => false)
       if (wrote) {
@@ -499,13 +500,15 @@ export const register: Register = on => {
             <Text>{line}</Text>
           ))}
           {chipRow(chipsOf(all), cols)}
+          {snap.today && <Text dimColor>{todayLine(snap.today)}</Text>}
         </Box>
       )
     }
 
     const { Raster } = $.ui.resolve(e)
     // the chips take up to CHIP_ROWS under the Raster; under 4 rows left, layoutPanel gives the summary
-    const rowsGiven = Math.max(0, e.props.scroll.bodyRows - CHIP_ROWS)
+    // and one row for the "today" usage line when the tracker sends it
+    const rowsGiven = Math.max(0, e.props.scroll.bodyRows - CHIP_ROWS - (snap.today ? 1 : 0))
     const model = layoutPanel(snap.state, cols, rowsGiven, anims)
     if (model.mode === 'summary') {
       mounted = null
@@ -523,6 +526,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Raster key="office" columns={cols} rows={rows} cells={cells} />
         {chipRow(chips, cols)}
+        {snap.today && <Text dimColor>{todayLine(snap.today)}</Text>}
       </Box>
     )
   })
