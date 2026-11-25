@@ -22,7 +22,10 @@ const conn = document.getElementById('conn') as HTMLElement;
 
 const floor = new Floor(svg, layer, viewport);
 const params = new URLSearchParams(location.search);
-const token = params.get('token') ?? '';
+// The desktop app passes the token itself (?token=, never in a transcript). /office links carry a
+// one-time ?ticket= instead, traded below for a read-only key that only this tab keeps.
+let token = params.get('token') ?? '';
+const KEY = 'agentOffice.key';
 const shell = params.get('shell') === 'electron';
 const compact = params.get('compact') === '1';
 /** a room to zoom as soon as it exists (set when leaving compact mode via a chip) */
@@ -40,8 +43,37 @@ const strip = document.getElementById('strip') as HTMLElement;
 strip.hidden = !compact;
 // usage across every session, at the top of the full office (not in the compact strip)
 const usageEl = document.getElementById('usage') as HTMLElement;
-if (compact || !token) usageEl.hidden = true;
-else new UsageBar(usageEl, document.getElementById('usage-details') as HTMLElement, token);
+usageEl.hidden = true;
+
+/** Trades a ?ticket= for a key (once), drops it from the address bar, and falls back to this tab's saved key. */
+async function signIn(): Promise<string> {
+  if (token) return token;
+  const ticket = params.get('ticket');
+  if (ticket) {
+    params.delete('ticket');
+    const q = params.toString();
+    history.replaceState(null, '', location.pathname + (q ? `?${q}` : '') + location.hash);
+    try {
+      const res = await fetch('/redeem', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket }), cache: 'no-store' });
+      if (res.ok) {
+        const key = String(((await res.json()) as { key?: unknown }).key ?? '');
+        try {
+          sessionStorage.setItem(KEY, key);
+        } catch {
+          /* not kept: this load still works */
+        }
+        return key;
+      }
+    } catch {
+      /* fall through to a saved key */
+    }
+  }
+  try {
+    return sessionStorage.getItem(KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
 
 
 const panelEl = document.getElementById('panel') as HTMLElement;
@@ -256,8 +288,23 @@ function connect(): void {
   };
   ws.onclose = () => {
     conn.hidden = false;
-    setTimeout(connect, delay);
-    delay = Math.min(delay * 2, 5000);
+    // a tracker that restarted no longer knows this tab's key: say so instead of retrying forever
+    void fetch('/state', { headers: { 'X-Agent-Office-Token': token }, cache: 'no-store' })
+      .then((r) => r.status === 401)
+      .catch(() => false)
+      .then((expired) => {
+        if (expired) {
+          try {
+            sessionStorage.removeItem(KEY);
+          } catch {
+            /* nothing kept */
+          }
+          conn.textContent = 'Signed out (the office tracker restarted): run /office again for a fresh link.';
+          return;
+        }
+        setTimeout(connect, delay);
+        delay = Math.min(delay * 2, 5000);
+      });
   };
 }
 
@@ -287,9 +334,19 @@ setInterval(() => {
   panel.refresh(floor.state);
 }, 1000);
 
-if (!token) empty.textContent = 'Missing token: open the URL printed by Agent Office.';
 draw();
-connect();
+void signIn().then((t) => {
+  token = t;
+  if (!token) {
+    empty.textContent = 'This link has expired or was already used: run /office again for a fresh one.';
+    return;
+  }
+  if (!compact) {
+    usageEl.hidden = false;
+    new UsageBar(usageEl, document.getElementById('usage-details') as HTMLElement, token);
+  }
+  connect();
+});
 
 // hooks for later tasks (animator, click panel) and for debugging
 (window as unknown as { agentOffice: unknown }).agentOffice = { floor, panel, zoom: setZoom, anim: animStats, planAnimations, runAnimations, svg };

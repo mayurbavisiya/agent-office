@@ -2126,6 +2126,7 @@ var conn = document.getElementById("conn");
 var floor = new Floor(svg, layer, viewport);
 var params = new URLSearchParams(location.search);
 var token = params.get("token") ?? "";
+var KEY = "agentOffice.key";
 var shell = params.get("shell") === "electron";
 var compact = params.get("compact") === "1";
 var pendingZoom = params.get("zoom");
@@ -2139,8 +2140,33 @@ if (shell) {
 var strip = document.getElementById("strip");
 strip.hidden = !compact;
 var usageEl = document.getElementById("usage");
-if (compact || !token) usageEl.hidden = true;
-else new UsageBar(usageEl, document.getElementById("usage-details"), token);
+usageEl.hidden = true;
+async function signIn() {
+  if (token) return token;
+  const ticket = params.get("ticket");
+  if (ticket) {
+    params.delete("ticket");
+    const q = params.toString();
+    history.replaceState(null, "", location.pathname + (q ? `?${q}` : "") + location.hash);
+    try {
+      const res = await fetch("/redeem", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticket }), cache: "no-store" });
+      if (res.ok) {
+        const key = String((await res.json()).key ?? "");
+        try {
+          sessionStorage.setItem(KEY, key);
+        } catch {
+        }
+        return key;
+      }
+    } catch {
+    }
+  }
+  try {
+    return sessionStorage.getItem(KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
 var panelEl = document.getElementById("panel");
 var panel = new InfoPanel(panelEl);
 var PANEL_W = 300 + 24;
@@ -2336,8 +2362,18 @@ function connect() {
   };
   ws.onclose = () => {
     conn.hidden = false;
-    setTimeout(connect, delay);
-    delay = Math.min(delay * 2, 5e3);
+    void fetch("/state", { headers: { "X-Agent-Office-Token": token }, cache: "no-store" }).then((r) => r.status === 401).catch(() => false).then((expired) => {
+      if (expired) {
+        try {
+          sessionStorage.removeItem(KEY);
+        } catch {
+        }
+        conn.textContent = "Signed out (the office tracker restarted): run /office again for a fresh link.";
+        return;
+      }
+      setTimeout(connect, delay);
+      delay = Math.min(delay * 2, 5e3);
+    });
   };
 }
 svg.addEventListener(ROOM_FADED_EVENT, (e) => {
@@ -2362,8 +2398,18 @@ setInterval(() => {
   refreshTags();
   panel.refresh(floor.state);
 }, 1e3);
-if (!token) empty.textContent = "Missing token: open the URL printed by Agent Office.";
 draw();
-connect();
+void signIn().then((t) => {
+  token = t;
+  if (!token) {
+    empty.textContent = "This link has expired or was already used: run /office again for a fresh one.";
+    return;
+  }
+  if (!compact) {
+    usageEl.hidden = false;
+    new UsageBar(usageEl, document.getElementById("usage-details"), token);
+  }
+  connect();
+});
 window.agentOffice = { floor, panel, zoom: setZoom, anim: animStats, planAnimations, runAnimations, svg };
 //# sourceMappingURL=main.js.map

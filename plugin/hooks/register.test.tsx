@@ -1,11 +1,13 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { proofFor } from '../mod/office'
 
 const DIR = '/tmp/ao-test'
 const CONFIG = `${DIR}/config.json`
 const PORT = 47999
 const TOKEN = 'tok-test-123'
+const TICKET = 'tkt-test-abcdefghijklmnop'
 const PLUGIN_VERSION = '0.1.0'
 
 type Answer = 'refused' | 'hang' | { status: number; json?: unknown; text?: string }
@@ -37,6 +39,8 @@ function world(on: On, w: World) {
   const events: { headers: Record<string, string>; body: unknown }[] = []
   let launched = false
   let probes = 0
+  let hellos = 0
+  const tickets: { headers: Record<string, string> }[] = []
 
   const clock = mock.clock(on)
   mock.env(on, { AGENT_OFFICE_DIR: DIR, HOME: '/home/u' })
@@ -86,8 +90,29 @@ function world(on: On, w: World) {
         isStderrTruncated: false,
       } }
   })
-  on('http.fetch', (_, e) => {
+  on('http.fetch', async (_, e) => {
     const headers = (e.init?.headers ?? {}) as Record<string, string>
+    if (e.url.includes('/hello?nonce=')) {
+      // a current tracker proves it knows TOKEN; one with another token (401 on /state) can't;
+      // anything that is not a tracker has no /hello. Peeks at the next /state answer.
+      hellos++
+      const a = w.state[Math.min(probes, w.state.length - 1)]
+      if (a === 'hang') return new Promise<never>(() => undefined)
+      if (a === undefined || a === 'refused') {
+        probes++ // nothing listening: this step of the script is spent here
+        return { deny: 'connect ECONNREFUSED 127.0.0.1' }
+      }
+      if (a.status === 200 || a.status === 401) {
+        const nonce = new URL(e.url).searchParams.get('nonce') ?? ''
+        const proof = a.status === 200 ? await proofFor(TOKEN, nonce) : 'not-the-proof'
+        return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ app: 'agent-office', proof }) } }
+      }
+      return { value: { status: 404, ok: false, headers: {}, text: 'not found' } }
+    }
+    if (e.url.endsWith('/ticket')) {
+      tickets.push({ headers })
+      return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ ticket: TICKET }) } }
+    }
     if (e.url.endsWith('/event')) {
       events.push({ headers, body: e.init?.body })
       const status = w.event ?? 404
@@ -113,6 +138,8 @@ function world(on: On, w: World) {
     events,
     clock,
     probes: () => probes,
+    hellos: () => hellos,
+    tickets,
     /** the person closes the pane: the engine lists it no more */
     closePane: () => {
       closed = true
@@ -156,7 +183,7 @@ test('/office starts the tracker when none answers', async ($, on) => {
   expect(w.runs[0]?.some(a => a.endsWith('/scripts/launch-tracker.sh'))).toBe(true)
   expect(w.runs[0]?.some(a => a.includes(TOKEN))).toBe(false)
   expect(w.opened).toEqual(['agent-office'])
-  expect(text).toContain(`http://127.0.0.1:${PORT}/?token=${TOKEN}`)
+  expect(text).toContain(`http://127.0.0.1:${PORT}/?ticket=${TICKET}`)
   expect(text).toMatch(/started/i)
 })
 
@@ -171,7 +198,8 @@ test('/office costs no tokens: its reply is display-only and the model gets no c
   })
   expect(r.isTextDisplayOnly).toBe(true)
   expect(r.context ?? []).toEqual([])
-  expect(r.text).toContain(`token=${TOKEN}`)
+  expect(r.text).toContain(`ticket=${TICKET}`)
+  expect(r.text).not.toContain(TOKEN)
 })
 
 test('/office waits for the config the tracker writes on first run', async ($, on) => {
@@ -180,7 +208,7 @@ test('/office waits for the config the tracker writes on first run', async ($, o
 
   expect(w.runs.length).toBe(1)
   expect(w.opened).toEqual(['agent-office'])
-  expect(text).toContain(`http://127.0.0.1:${PORT}/?token=${TOKEN}`)
+  expect(text).toContain(`http://127.0.0.1:${PORT}/?ticket=${TICKET}`)
 })
 
 test('/office reuses a running tracker', async ($, on) => {
@@ -189,7 +217,7 @@ test('/office reuses a running tracker', async ($, on) => {
 
   expect(w.runs.length).toBe(0)
   expect(w.opened).toEqual(['agent-office'])
-  expect(text).toContain(`http://127.0.0.1:${PORT}/?token=${TOKEN}`)
+  expect(text).toContain(`http://127.0.0.1:${PORT}/?ticket=${TICKET}`)
   expect(text).not.toMatch(/desktop app/i)
 })
 
@@ -215,22 +243,23 @@ test('/office reports a foreign port', async ($, on) => {
 
   expect(w.runs.length).toBe(0)
   expect(text).toBe(
-    `Port ${PORT} is in use by something else. Change "port" in ~/.agent-office/config.json and run /office again.`,
+    `Port ${PORT} is in use by something that can't prove it is this Agent Office (or an older Agent Office app: rebuild or quit it). Change "port" in ~/.agent-office/config.json and run /office again.`,
   )
   expect(w.opened).toEqual([])
 })
 
-test('/office names an older Agent Office app (no /state, but /event answers 400)', async ($, on) => {
+test('/office never sends the token to a listener that cannot prove it knows it (an older app, or a stranger)', async ($, on) => {
   const w = world(on, { state: [{ status: 404, text: 'not found' }], event: 400 })
   const text = await office($)
 
-  expect(w.events.length).toBe(1)
-  expect(w.events[0]?.headers['X-Agent-Office-Token']).toBe(TOKEN)
-  expect(w.events[0]?.body).toBe('{}')
+  expect(w.hellos()).toBeGreaterThan(0)
+  expect(w.probes()).toBe(0)
+  expect(w.events.length).toBe(0)
+  expect(w.posts.length).toBe(0)
   expect(w.runs.length).toBe(0)
   expect(w.opened).toEqual([])
   expect(text).toBe(
-    `An older Agent Office app is running on port ${PORT}. Rebuild and restart it (or quit it) to use /office.`,
+    `Port ${PORT} is in use by something that can't prove it is this Agent Office (or an older Agent Office app: rebuild or quit it). Change "port" in ~/.agent-office/config.json and run /office again.`,
   )
 })
 
@@ -270,7 +299,7 @@ test('/office restarts a plugin tracker of another version', async ($, on) => {
   expect(w.posts[0]?.headers['X-Agent-Office-Token']).toBe(TOKEN)
   expect(w.runs.length).toBe(1)
   expect(w.opened).toEqual(['agent-office'])
-  expect(text).toContain(`/?token=${TOKEN}`)
+  expect(text).toContain(`/?ticket=${TICKET}`)
 })
 
 test('/office leaves an app tracker of another version alone', async ($, on) => {
@@ -523,6 +552,6 @@ test('/office keeps an old tracker that will not stop for the update', async ($,
   expect(text.split('\n')[0]).toBe(
     "Couldn't restart the office tracker for the update; using the running one.",
   )
-  expect(text).toContain(`/?token=${TOKEN}`)
+  expect(text).toContain(`/?ticket=${TICKET}`)
   expect(clockMs).toBeLessThanOrEqual(4500)
 })

@@ -24,13 +24,22 @@ function freePort(): Promise<number> {
   });
 }
 
-function homeWith(config: object | null): string {
+/** A home with ~/.agent-office/config.json and a tracker.pid naming `pid` (default: this live test process). */
+function homeWith(config: object | null, pid: number | string | null = process.pid): string {
   const home = mkdtempSync(join(tmpdir(), 'ao-home-'));
   if (config) {
     mkdirSync(join(home, '.agent-office'));
     writeFileSync(join(home, '.agent-office', 'config.json'), JSON.stringify(config));
+    if (pid !== null) writeFileSync(join(home, '.agent-office', 'tracker.pid'), String(pid));
   }
   return home;
+}
+
+/** A pid no process has: a child that already exited. */
+async function deadPid(): Promise<number> {
+  const p = spawn('true');
+  await new Promise((r) => p.on('close', r));
+  return p.pid!;
 }
 
 function run(home: string, stdin: string, env: Record<string, string> = {}) {
@@ -110,6 +119,7 @@ describe('forward.sh', () => {
     const { store, port } = await boot();
     const dir = mkdtempSync(join(tmpdir(), 'ao-dir-'));
     writeFileSync(join(dir, 'config.json'), JSON.stringify({ port, token: TOKEN }));
+    writeFileSync(join(dir, 'tracker.pid'), String(process.pid));
     const r = await run(homeWith(null), JSON.stringify(ev()), { AGENT_OFFICE_DIR: dir });
     expect(r).toMatchObject({ code: 0, out: '', err: '' });
     expect(Object.keys(store.snapshot().sessions)).toContain('S1');
@@ -127,6 +137,48 @@ describe('forward.sh', () => {
     const args = readFileSync(argv, 'utf8');
     expect(args).toContain('--max-time');
     expect(args).not.toContain('secret-token-xyz');
+    // -q (skip ~/.curlrc) only works as the very first argument
+    expect(args.split('\n')[0]).toBe('-q');
+    expect(args).toContain('--noproxy\n*\n');
+    expect(args).toContain('--max-redirs\n0\n');
+  });
+
+  it('sends nothing while no tracker runs: no pid file, a dead pid, or junk in it', async () => {
+    const bin = mkdtempSync(join(tmpdir(), 'ao-bin-'));
+    const ran = join(bin, 'ran.txt');
+    writeFileSync(join(bin, 'curl'), `#!/bin/sh\ntouch '${ran}'\ncat >/dev/null\nexit 0\n`);
+    chmodSync(join(bin, 'curl'), 0o755);
+    const env = { PATH: `${bin}:${process.env.PATH}` };
+    for (const pid of [null, await deadPid(), '12; rm -rf /', '']) {
+      const r = await run(homeWith({ port: 1, token: TOKEN }, pid), JSON.stringify(ev()), env);
+      expect(r).toMatchObject({ code: 0, out: '', err: '' });
+      expect(existsSync(ran)).toBe(false);
+    }
+  });
+
+  it('goes straight to the tracker even with http_proxy / ALL_PROXY set', async () => {
+    const { store, port } = await boot();
+    const seen: string[] = [];
+    const proxy = createServer((sock) => {
+      seen.push('proxied');
+      sock.destroy();
+    });
+    await new Promise<void>((res) => proxy.listen(0, '127.0.0.1', res));
+    closers.push(() => new Promise<void>((res) => proxy.close(() => res())));
+    const via = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
+    const r = await run(homeWith({ port, token: TOKEN }), JSON.stringify(ev()), { http_proxy: via, HTTP_PROXY: via, ALL_PROXY: via, all_proxy: via });
+    expect(r).toMatchObject({ code: 0, out: '', err: '' });
+    expect(seen).toEqual([]);
+    expect(Object.keys(store.snapshot().sessions)).toContain('S1');
+  });
+
+  it('ignores a ~/.curlrc (which could add a proxy or another host)', async () => {
+    const { store, port } = await boot();
+    const home = homeWith({ port, token: TOKEN });
+    writeFileSync(join(home, '.curlrc'), 'proxy = "http://127.0.0.1:1"\n');
+    const r = await run(home, JSON.stringify(ev()));
+    expect(r).toMatchObject({ code: 0, out: '', err: '' });
+    expect(Object.keys(store.snapshot().sessions)).toContain('S1');
   });
 
   it('with a server that accepts but never responds, exits 0 within the curl timeout', async () => {

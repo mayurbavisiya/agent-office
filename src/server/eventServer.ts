@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { DAY_RE, localDay, totalTokens, type UsageSummary } from '../core/usage.js';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -29,6 +29,17 @@ const MIME: Record<string, string> = {
 const digest = (s: string) => createHash('sha256').update(s).digest();
 const tokenOk = (given: unknown, expected: string): boolean => typeof given === 'string' && timingSafeEqual(digest(given), digest(expected));
 
+/**
+ * The tracker's answer to `GET /hello?nonce=…`: proof that it knows the token, without sending it.
+ * Clients check it before they send the token anywhere, so a stranger holding the port gets nothing.
+ */
+export const proofFor = (token: string, nonce: string): string => createHash('sha256').update(`agent-office-proof:${token}:${nonce}`).digest('hex');
+
+/** A ticket from `POST /ticket` works once, for this long. */
+export const TICKET_MS = 120_000;
+const MAX_TICKETS = 16;
+const MAX_KEYS = 32;
+
 function reply(res: ServerResponse, status: number, body = '', headers: Record<string, string> = {}): void {
   res.writeHead(status, { 'Cache-Control': 'no-store', ...headers });
   res.end(body);
@@ -48,9 +59,15 @@ export function startEventServer(opts: { port: number; token: string; store: Off
   let seq = 0;
   /** when this server started (ms since the epoch): with `version`, tells one tracker run from the next */
   const startedAt = Date.now();
+  // One-time tickets (for links that may end up in a transcript) and the read-only keys they buy.
+  // Both live in memory only: a restart voids them, so an old link or tab just asks for /office again.
+  const tickets = new Map<string, number>();
+  const keys: string[] = [];
+  const readOk = (given: unknown): boolean => tokenOk(given, token) || (typeof given === 'string' && given.length > 0 && keys.some((k) => tokenOk(given, k)));
   const root = resolve(opts.staticDir);
   const wss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
+  let boundPort = port;
 
   const send = (ws: WebSocket, msg: ServerMessage) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -128,7 +145,7 @@ export function startEventServer(opts: { port: number; token: string; store: Off
    * `seq` restarts at 0 with each run, so a reader keys "changed" on `version` + `startedAt` + `seq`.
    */
   function handleState(req: IncomingMessage, res: ServerResponse): void {
-    if (!tokenOk(req.headers['x-agent-office-token'], token)) return reply(res, 401, 'unauthorized');
+    if (!readOk(req.headers['x-agent-office-token'])) return reply(res, 401, 'unauthorized');
     const body: Record<string, unknown> = { version, startedBy, startedAt, seq, state: store.snapshot() };
     if (opts.usage && !opts.usage.scanning) {
       const day = localDay(Date.now());
@@ -143,12 +160,64 @@ export function startEventServer(opts: { port: number; token: string; store: Off
    * across every session for those local days, plus `scanning` while the first read of the logs runs.
    */
   function handleUsage(req: IncomingMessage, res: ServerResponse, url: URL): void {
-    if (!tokenOk(req.headers['x-agent-office-token'], token)) return reply(res, 401, 'unauthorized');
+    if (!readOk(req.headers['x-agent-office-token'])) return reply(res, 401, 'unauthorized');
     if (!opts.usage) return reply(res, 404, 'usage not available');
     const from = url.searchParams.get('from') ?? '';
     const to = url.searchParams.get('to') ?? '';
     if (!DAY_RE.test(from) || !DAY_RE.test(to) || from > to) return reply(res, 400, 'from and to must be YYYY-MM-DD, from <= to');
     reply(res, 200, JSON.stringify({ scanning: opts.usage.scanning, ...opts.usage.summary(from, to) }), { 'Content-Type': 'application/json; charset=utf-8' });
+  }
+
+  /**
+   * `POST /ticket` (token in `X-Agent-Office-Token`): `{ ticket }`, good once within TICKET_MS. `/office`
+   * puts the ticket in its link instead of the token, so the copy left in the transcript is worthless.
+   */
+  function handleTicket(req: IncomingMessage, res: ServerResponse): void {
+    req.resume();
+    if (!tokenOk(req.headers['x-agent-office-token'], token)) return reply(res, 401, 'unauthorized');
+    const now = Date.now();
+    for (const [t, exp] of tickets) if (exp <= now) tickets.delete(t);
+    while (tickets.size >= MAX_TICKETS) tickets.delete(tickets.keys().next().value!);
+    const ticket = randomBytes(24).toString('base64url');
+    tickets.set(ticket, now + TICKET_MS);
+    reply(res, 200, JSON.stringify({ ticket, expiresInMs: TICKET_MS }), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  }
+
+  /**
+   * `POST /redeem` with `{ "ticket": "…" }` from the office page itself: spends the ticket and answers
+   * `{ key }`, a read-only key (state, usage, live updates; never /event, /shutdown or /ticket).
+   * Only same-origin browser requests: a page on another site (or a rebinding DNS name) is refused.
+   */
+  function handleRedeem(req: IncomingMessage, res: ServerResponse): void {
+    const host = req.headers.host ?? '';
+    const own = [`127.0.0.1:${boundPort}`, `localhost:${boundPort}`];
+    const origin = req.headers.origin;
+    if (!own.includes(host) || (origin !== undefined && !own.some((h) => origin === `http://${h}`))) {
+      req.resume();
+      return reply(res, 403, 'forbidden');
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size <= 1024) chunks.push(c);
+    });
+    req.on('error', () => undefined);
+    req.on('end', () => {
+      let ticket: unknown;
+      try {
+        ticket = size <= 1024 ? (JSON.parse(Buffer.concat(chunks).toString('utf8')) as { ticket?: unknown }).ticket : undefined;
+      } catch {
+        ticket = undefined;
+      }
+      const exp = typeof ticket === 'string' ? tickets.get(ticket) : undefined;
+      if (typeof ticket === 'string') tickets.delete(ticket);
+      if (exp === undefined || exp <= Date.now()) return reply(res, 401, 'ticket expired or already used: run /office again');
+      const key = randomBytes(32).toString('base64url');
+      keys.push(key);
+      if (keys.length > MAX_KEYS) keys.shift();
+      reply(res, 200, JSON.stringify({ key }), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    });
   }
 
   /** `/office stop`: only a tracker the plugin started stops this way; the app quits from its menu. */
@@ -191,7 +260,20 @@ export function startEventServer(opts: { port: number; token: string; store: Off
         if (req.method !== 'POST') return reply(res, 405, 'method not allowed', { Allow: 'POST' });
         return handleShutdown(req, res);
       }
+      if (url.pathname === '/ticket') {
+        if (req.method !== 'POST') return reply(res, 405, 'method not allowed', { Allow: 'POST' });
+        return handleTicket(req, res);
+      }
+      if (url.pathname === '/redeem') {
+        if (req.method !== 'POST') return reply(res, 405, 'method not allowed', { Allow: 'POST' });
+        return handleRedeem(req, res);
+      }
       if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, 'method not allowed');
+      if (url.pathname === '/hello') {
+        const nonce = url.searchParams.get('nonce') ?? '';
+        if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) return reply(res, 400, 'nonce: 16-128 url-safe characters');
+        return reply(res, 200, JSON.stringify({ app: 'agent-office', proof: proofFor(token, nonce) }), { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+      }
       if (url.pathname === '/state') return handleState(req, res);
       if (url.pathname === '/usage') return handleUsage(req, res, url);
       void handleStatic(req, res, url.pathname);
@@ -214,7 +296,7 @@ export function startEventServer(opts: { port: number; token: string; store: Off
       socket.destroy();
       return;
     }
-    if (!tokenOk(url.searchParams.get('token'), token)) {
+    if (!readOk(url.searchParams.get('token'))) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
@@ -235,6 +317,7 @@ export function startEventServer(opts: { port: number; token: string; store: Off
       server.removeAllListeners('error');
       server.on('error', () => undefined);
       const actual = (server.address() as { port: number }).port;
+      boundPort = actual;
       resolveStart({
         url: `http://${HOST}:${actual}`,
         clientCount: () => clients.size,

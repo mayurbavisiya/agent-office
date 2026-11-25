@@ -1,6 +1,7 @@
 // The desktop app's start when its port is taken: a tracker the plugin started (`/office`) gives the
 // port up on POST /shutdown, so the app stops it and starts once more. Anything else is left alone.
 // No Electron imports, so vitest runs it against a real tracker.
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 
 export type PortConfig = { port: number; token: string };
@@ -18,11 +19,13 @@ const HOST = '127.0.0.1';
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 export const isPortInUse = (msg: string): boolean => /EADDRINUSE|in use/i.test(msg);
 
+/** Token-bearing request; never follows a redirect (fetch would carry the token header to the new host). */
 async function request(cfg: PortConfig, path: string, method: 'GET' | 'POST', ms: number): Promise<Response | undefined> {
   try {
     return await fetch(`http://${HOST}:${cfg.port}${path}`, {
       method,
       headers: { 'X-Agent-Office-Token': cfg.token },
+      redirect: 'error',
       signal: AbortSignal.timeout(ms),
     });
   } catch {
@@ -30,8 +33,25 @@ async function request(cfg: PortConfig, path: string, method: 'GET' | 'POST', ms
   }
 }
 
+/**
+ * Whether whatever holds the port is an Agent Office tracker that knows our token: `GET /hello` with
+ * a fresh nonce must come back with sha256 of token + nonce. Checked before the token is ever sent.
+ */
+export async function provesToken(cfg: PortConfig, ms: number): Promise<boolean> {
+  const nonce = randomBytes(18).toString('base64url');
+  try {
+    const r = await fetch(`http://${HOST}:${cfg.port}/hello?nonce=${nonce}`, { redirect: 'error', signal: AbortSignal.timeout(ms) });
+    if (r.status !== 200) return false;
+    const body = (await r.json()) as { proof?: unknown };
+    return body.proof === createHash('sha256').update(`agent-office-proof:${cfg.token}:${nonce}`).digest('hex');
+  } catch {
+    return false;
+  }
+}
+
 /** Whether `GET /state` says a tracker the plugin started holds the port. */
 async function isPluginTracker(cfg: PortConfig, ms: number): Promise<boolean> {
+  if (!(await provesToken(cfg, ms))) return false;
   const r = await request(cfg, '/state', 'GET', ms);
   if (!r || r.status !== 200) return false;
   try {

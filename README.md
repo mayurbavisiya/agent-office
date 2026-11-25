@@ -40,7 +40,7 @@ Type `/office stop` to stop the tracker.
 
 `/office` starts a small background tracker if none is running. It needs Node 20+. It exits on its own after 30 minutes with no busy session. Its log is `~/.agent-office/tracker.log`. If the desktop app is already running, `/office` uses it and leaves it alone.
 
-With no tracker answering, the panel shows "office tracker not running — run /office". On a surface that cannot start processes, `/office` says to run it once in terminal Claude, or open the Agent Office app. If an older Agent Office app (one without `/state`) holds the port, `/office` says to rebuild and restart it or quit it; if the tracker on the port uses another token, it says so. If the desktop app finds a tracker that `/office` started on its port, it stops that tracker and takes the port over.
+With no tracker answering, the panel shows "office tracker not running — run /office". On a surface that cannot start processes, `/office` says to run it once in terminal Claude, or open the Agent Office app. If something that can't prove it knows the token holds the port (another program, or an older Agent Office app), `/office` sends it nothing and says to change the port or rebuild or quit that app; if the tracker on the port uses another token, it says so. If the desktop app finds a tracker that `/office` started on its port, it stops that tracker and takes the port over.
 
 The plugin also forwards hook events (`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `Stop`, `Notification`, `SubagentStart`, `SubagentStop`, `PreToolUse`, `PostToolUse`) with `plugin/scripts/forward.sh`. The hooks are `async: true` and the script uses `curl --max-time 1`. With nothing listening, a hook run took about 14 ms, exited 0 and printed nothing, so Claude Code is unaffected. Without hooks, sessions are still found by rescanning `~/.claude/sessions/*.json` (or `$CLAUDE_CONFIG_DIR`) every 3 seconds.
 
@@ -86,7 +86,11 @@ Everything lives in `~/.agent-office/` (override the folder with the `AGENT_OFFI
 
 ## Privacy
 
-Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only. The hook event endpoint, the `/state` and `/usage` endpoints and the live connection the office window uses all require the token from `config.json` (the plugin sends it in a header, never on the command line); the office page's static files are served without it. The `/office` link contains the token, so treat it like a password. The `/office` reply is shown to you only: the model never reads it, so `/office` uses no tokens. The transcript row still holds the link. The `.key` files in the session registry are never read.
+Everything stays on your machine and nothing is sent anywhere. The local server binds to 127.0.0.1 only. The hook event endpoint, the `/state` and `/usage` endpoints and the live connection the office window uses all require the token from `config.json` (the plugin sends it in a header, never on the command line); the office page's static files are served without it. The `.key` files in the session registry are never read.
+
+- **Hook events only reach Agent Office's own tracker.** The hooks pass Claude Code's full hook payloads (prompts, tool inputs and outputs) to the tracker over loopback. The forwarder sends only while the tracker's `tracker.pid` names a live process of yours, so nothing goes to whatever else might be on the port while the office is off. It ignores `http_proxy`/`ALL_PROXY` and `~/.curlrc`, and never follows a redirect.
+- **The `/office` link never contains the token.** It carries a one-time ticket that works once, within 2 minutes. Opening it trades the ticket for a read-only key that only that browser tab keeps (it can watch the office but not send events or stop the tracker) and removes the ticket from the address bar. The copy left in the transcript is useless after that. After a tracker restart, open a fresh link with `/office`. The `/office` reply is shown to you only, so `/office` uses no tokens.
+- **The token is only sent to a tracker that proves it knows it.** Before sending the token, the plugin and the desktop app ask whatever holds the port to prove (with a hash of the token and a fresh random value) that it knows the token. Their requests never follow redirects.
 
 ## Known limits
 

@@ -168,7 +168,12 @@ every field as optional and tolerate garbage.
 - `/office` replies with `isTextDisplayOnly` and no `context`: the person sees the reply and the link,
   the model reads nothing, so `/office` costs no tokens. The transcript row still holds the link.
 - `isTextDisplayOnly` is ignored when `/office` is queued mid-turn, so the model may then see the link
-  (with its token) in that turn.
+  in that turn. Since 0.1.10 the link carries a one-time ticket (`POST /ticket`, good once for 2
+  minutes), never the token: the page trades it at `POST /redeem` for a read-only key kept in that
+  tab's sessionStorage and drops it from the address bar, so a copy in the transcript is worthless.
+- Before sending the token, the mod and the desktop app call `GET /hello?nonce=…`: the tracker answers
+  sha256("agent-office-proof:<token>:<nonce>"), so a stranger holding the port gets nothing. A tracker
+  from before /hello is trusted only when `tracker.pid` names a live process of this user (`kill -0`).
 
 ## PermissionRequest and Notification (verified on Claude Code 2.1.332)
 

@@ -1,6 +1,6 @@
 // Electron main process: a floating, transparent, always-on-top office window plus a menu-bar tray.
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } from 'electron';
-import { writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -259,6 +259,14 @@ if (!app.requestSingleInstanceLock()) {
     }
     office = started.app;
     token = loadOrCreateConfig(dataDir).token;
+    // the hook forwarder only sends to a live tracker named by this file (see plugin/scripts/forward.sh)
+    const pidFile = join(dataDir, 'tracker.pid');
+    try {
+      writeFileSync(pidFile, String(process.pid), { mode: 0o600 });
+      app.on('quit', () => rmSync(pidFile, { force: true }));
+    } catch (err) {
+      log('pid file not written', String(err));
+    }
     log('server up', office.url);
     createWindow();
     createTray();

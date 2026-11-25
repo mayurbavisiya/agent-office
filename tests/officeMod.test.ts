@@ -1,7 +1,32 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { MESSAGES, classifyProbe, formatReply, needsEventCheck, parseConfig } from '../plugin/mod/office.js';
+import { MESSAGES, classifyHello, classifyProbe, formatReply, needsEventCheck, newNonce, parseConfig, parseTicket, proofFor } from '../plugin/mod/office.js';
+import { proofFor as serverProof } from '../src/server/eventServer.js';
+
+describe('the /hello proof', () => {
+  it('the plugin and the tracker compute the same proof', async () => {
+    const n = newNonce();
+    expect(n).toMatch(/^[A-Za-z0-9_-]{24}$/);
+    expect(await proofFor('tok', n)).toBe(serverProof('tok', n));
+  });
+  it('classifies who answered', async () => {
+    const good = await proofFor('tok', 'n'.repeat(16));
+    const ok = (body: unknown) => ({ status: 200, text: JSON.stringify(body) });
+    expect(classifyHello(ok({ app: 'agent-office', proof: good }), good)).toBe('proven');
+    expect(classifyHello(ok({ app: 'agent-office', proof: 'x' }), good)).toBe('wrong');
+    expect(classifyHello(ok({ proof: good }), good)).toBe('missing');
+    expect(classifyHello({ status: 404, text: '' }, good)).toBe('missing');
+    expect(classifyHello({ status: 200, text: 'not json' }, good)).toBe('missing');
+    expect(classifyHello('refused', good)).toBe('refused');
+  });
+  it('parseTicket takes only a plausible ticket', () => {
+    expect(parseTicket(JSON.stringify({ ticket: 'abcdefghijklmnop_-12' }))).toBe('abcdefghijklmnop_-12');
+    expect(parseTicket(JSON.stringify({ ticket: 'short' }))).toBeUndefined();
+    expect(parseTicket(JSON.stringify({ ticket: 'has spaces and <html> in it' }))).toBeUndefined();
+    expect(parseTicket('nope')).toBeUndefined();
+  });
+});
 
 describe('parseConfig', () => {
   it('reads port and token', () => {
@@ -59,12 +84,18 @@ describe('classifyProbe', () => {
 });
 
 describe('formatReply', () => {
-  const base = { port: 47999, token: 'tok123', started: true };
-  it('includes the full-office link', () => {
+  const base = { port: 47999, ticket: 'tkt-abcdefghijklmnop', started: true };
+  it('links with the one-time ticket, never the token', () => {
     const t = formatReply({ ...base, appInstalled: false });
-    expect(t).toContain('http://127.0.0.1:47999/?token=tok123');
+    expect(t).toContain('http://127.0.0.1:47999/?ticket=tkt-abcdefghijklmnop');
+    expect(t).not.toContain('token=');
     expect(t.toLowerCase()).toContain('panel');
     expect(t).not.toMatch(/desktop app/i);
+  });
+  it('without a ticket (an older tracker) prints no link at all', () => {
+    const t = formatReply({ port: 47999, started: false, appInstalled: false });
+    expect(t).not.toContain('http://');
+    expect(t).toMatch(/older version/);
   });
   it('adds the app line only when the app is installed', () => {
     expect(formatReply({ ...base, appInstalled: true })).toMatch(/desktop app/i);

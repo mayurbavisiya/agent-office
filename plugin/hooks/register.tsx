@@ -4,7 +4,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import { MESSAGES, classifyProbe, formatReply, needsEventCheck, parseConfig } from '../mod/office'
+import { MESSAGES, classifyHello, classifyProbe, formatReply, needsEventCheck, newNonce, parseConfig, parseTicket, proofFor, type Hello } from '../mod/office'
 import type { OfficeConfig, Probe } from '../mod/office'
 import {
   chipsOf,
@@ -125,12 +125,54 @@ async function eventCheck($: Engine, cfg: OfficeConfig): Promise<number | 'refus
   return got === 'timeout' ? 'refused' : got
 }
 
+/** Asks whatever holds the port to prove it knows our token (GET /hello), without sending the token. */
+async function hello($: Engine, cfg: OfficeConfig): Promise<Hello> {
+  const nonce = newNonce()
+  const asked = $.http
+    .fetch(`http://127.0.0.1:${cfg.port}/hello?nonce=${nonce}`)
+    .then(r => ({ status: r.status, text: r.text }), () => 'refused' as const)
+  const got = await bounded($, asked)
+  return classifyHello(got === 'timeout' ? 'refused' : got, await proofFor(cfg.token, nonce))
+}
+
+/**
+ * A tracker from before /hello can't prove itself. It is trusted only when tracker.pid names a live
+ * process of this user (`kill -0` fails for anyone else's), the one our own launcher started.
+ */
+async function ownOlderTracker($: Engine): Promise<boolean> {
+  try {
+    const pid = String(await $.fs.read(`${await officeDir($)}/tracker.pid`)).trim()
+    if (!/^\d+$/.test(pid)) return false
+    return (await $.process.run(['kill', '-0', pid], { timeoutMs: 2_000 })).exitCode === 0
+  } catch {
+    return false
+  }
+}
+
+/** Whether the token may be sent to the port: proven, or an older tracker of our own. Cached until a request fails. */
+let trustedPort: string | undefined
+async function trusted($: Engine, cfg: OfficeConfig): Promise<Hello> {
+  const k = `${cfg.port}#${cfg.token}`
+  if (trustedPort === k) return 'proven'
+  let h = await hello($, cfg)
+  if (h === 'missing' && (await ownOlderTracker($))) h = 'proven'
+  trustedPort = h === 'proven' ? k : undefined
+  return h
+}
+
 async function probe($: Engine, cfg: OfficeConfig): Promise<ProbeResult> {
+  const h = await trusted($, cfg)
+  if (h === 'refused') return { kind: 'down' }
+  if (h === 'wrong') return { kind: 'badToken' }
+  if (h === 'missing') return { kind: 'foreign' }
   const asked = $.http
     .fetch(`http://127.0.0.1:${cfg.port}/state`, { headers: { 'X-Agent-Office-Token': cfg.token } })
     .catch(() => 'refused' as const)
   const got = await bounded($, asked)
-  if (got === 'refused' || got === 'timeout') return { kind: 'down' }
+  if (got === 'refused' || got === 'timeout') {
+    trustedPort = undefined
+    return { kind: 'down' }
+  }
   let json: unknown
   try {
     json = JSON.parse(got.text)
@@ -153,6 +195,21 @@ function notUsable(kind: Probe, port: number): string | undefined {
 async function onTerminal($: Engine): Promise<boolean> {
   const surfaces: readonly string[] = await $.session.surfaces().catch(() => [])
   return surfaces.includes('terminal')
+}
+
+/** A one-time ticket for the browser link (POST /ticket), or undefined (an older tracker, or no answer). */
+async function ticket($: Engine, cfg: OfficeConfig): Promise<string | undefined> {
+  const sent = $.http
+    .fetch(`http://127.0.0.1:${cfg.port}/ticket`, {
+      method: 'POST',
+      headers: { 'X-Agent-Office-Token': cfg.token },
+    })
+    .then(
+      r => (r.status === 200 ? parseTicket(r.text) : undefined),
+      () => undefined,
+    )
+  const got = await bounded($, sent)
+  return got === 'timeout' ? undefined : got
 }
 
 /** POST /shutdown; the HTTP status, or 0 when nothing answered in time. */
@@ -260,7 +317,8 @@ async function openOffice($: Engine): Promise<string> {
   cfgCache = cfg
   ensurePoll($)
   await pollOnce($)
-  const reply = formatReply({ port: cfg.port, token: cfg.token, started, appInstalled })
+  const t = await ticket($, cfg)
+  const reply = formatReply({ port: cfg.port, ...(t ? { ticket: t } : {}), started, appInstalled })
   return note ? `${note}\n${reply}` : reply
 }
 
@@ -308,11 +366,15 @@ function stopTimers(): void {
 }
 
 async function fetchSnapshot($: Engine, cfg: OfficeConfig): Promise<Snapshot | null> {
+  if ((await trusted($, cfg)) !== 'proven') return null
   const asked = $.http
     .fetch(`http://127.0.0.1:${cfg.port}/state`, { headers: { 'X-Agent-Office-Token': cfg.token } })
     .catch(() => 'refused' as const)
   const got = await bounded($, asked)
-  if (got === 'refused' || got === 'timeout' || got.status !== 200) return null
+  if (got === 'refused' || got === 'timeout' || got.status !== 200) {
+    trustedPort = undefined // ask again next time: the port may have changed hands
+    return null
+  }
   let json: unknown
   try {
     json = JSON.parse(got.text)

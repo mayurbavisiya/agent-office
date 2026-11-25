@@ -2289,7 +2289,7 @@ var require_websocket = __commonJS({
     var net = __require("net");
     var querystring = __require("querystring");
     var tls = __require("tls");
-    var { randomBytes: randomBytes2, createHash: createHash2 } = __require("crypto");
+    var { randomBytes: randomBytes3, createHash: createHash2 } = __require("crypto");
     var { Duplex, Readable } = __require("stream");
     var { URL: URL2 } = __require("url");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -2843,7 +2843,7 @@ var require_websocket = __commonJS({
         }
       }
       const defaultPort = isSecure ? 443 : 80;
-      const key = randomBytes2(16).toString("base64");
+      const key = randomBytes3(16).toString("base64");
       const request = isSecure ? https.request : http.request;
       const protocolSet = /* @__PURE__ */ new Set();
       let perMessageDeflate;
@@ -4128,7 +4128,7 @@ var UsageLedger = class {
 };
 
 // src/server/eventServer.ts
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes as randomBytes2, timingSafeEqual } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join as join3, resolve, sep } from "node:path";
 
@@ -4162,6 +4162,10 @@ var MIME = {
 };
 var digest = (s) => createHash("sha256").update(s).digest();
 var tokenOk = (given2, expected) => typeof given2 === "string" && timingSafeEqual(digest(given2), digest(expected));
+var proofFor = (token, nonce) => createHash("sha256").update(`agent-office-proof:${token}:${nonce}`).digest("hex");
+var TICKET_MS = 12e4;
+var MAX_TICKETS = 16;
+var MAX_KEYS = 32;
 function reply(res, status, body = "", headers = {}) {
   res.writeHead(status, { "Cache-Control": "no-store", ...headers });
   res.end(body);
@@ -4172,9 +4176,13 @@ function startEventServer(opts) {
   const startedBy2 = opts.startedBy ?? "app";
   let seq = 0;
   const startedAt = Date.now();
+  const tickets = /* @__PURE__ */ new Map();
+  const keys = [];
+  const readOk = (given2) => tokenOk(given2, token) || typeof given2 === "string" && given2.length > 0 && keys.some((k) => tokenOk(given2, k));
   const root = resolve(opts.staticDir);
   const wss = new import_websocket_server.default({ noServer: true });
   const clients = /* @__PURE__ */ new Set();
+  let boundPort = port;
   const send = (ws, msg) => {
     if (ws.readyState === import_websocket.default.OPEN) ws.send(JSON.stringify(msg));
   };
@@ -4242,7 +4250,7 @@ function startEventServer(opts) {
     });
   }
   function handleState(req, res) {
-    if (!tokenOk(req.headers["x-agent-office-token"], token)) return reply(res, 401, "unauthorized");
+    if (!readOk(req.headers["x-agent-office-token"])) return reply(res, 401, "unauthorized");
     const body = { version: version2, startedBy: startedBy2, startedAt, seq, state: store.snapshot() };
     if (opts.usage && !opts.usage.scanning) {
       const day = localDay(Date.now());
@@ -4252,12 +4260,53 @@ function startEventServer(opts) {
     reply(res, 200, JSON.stringify(body), { "Content-Type": "application/json; charset=utf-8" });
   }
   function handleUsage(req, res, url) {
-    if (!tokenOk(req.headers["x-agent-office-token"], token)) return reply(res, 401, "unauthorized");
+    if (!readOk(req.headers["x-agent-office-token"])) return reply(res, 401, "unauthorized");
     if (!opts.usage) return reply(res, 404, "usage not available");
     const from = url.searchParams.get("from") ?? "";
     const to = url.searchParams.get("to") ?? "";
     if (!DAY_RE.test(from) || !DAY_RE.test(to) || from > to) return reply(res, 400, "from and to must be YYYY-MM-DD, from <= to");
     reply(res, 200, JSON.stringify({ scanning: opts.usage.scanning, ...opts.usage.summary(from, to) }), { "Content-Type": "application/json; charset=utf-8" });
+  }
+  function handleTicket(req, res) {
+    req.resume();
+    if (!tokenOk(req.headers["x-agent-office-token"], token)) return reply(res, 401, "unauthorized");
+    const now = Date.now();
+    for (const [t, exp] of tickets) if (exp <= now) tickets.delete(t);
+    while (tickets.size >= MAX_TICKETS) tickets.delete(tickets.keys().next().value);
+    const ticket = randomBytes2(24).toString("base64url");
+    tickets.set(ticket, now + TICKET_MS);
+    reply(res, 200, JSON.stringify({ ticket, expiresInMs: TICKET_MS }), { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+  }
+  function handleRedeem(req, res) {
+    const host = req.headers.host ?? "";
+    const own = [`127.0.0.1:${boundPort}`, `localhost:${boundPort}`];
+    const origin = req.headers.origin;
+    if (!own.includes(host) || origin !== void 0 && !own.some((h) => origin === `http://${h}`)) {
+      req.resume();
+      return reply(res, 403, "forbidden");
+    }
+    const chunks = [];
+    let size = 0;
+    req.on("data", (c) => {
+      size += c.length;
+      if (size <= 1024) chunks.push(c);
+    });
+    req.on("error", () => void 0);
+    req.on("end", () => {
+      let ticket;
+      try {
+        ticket = size <= 1024 ? JSON.parse(Buffer.concat(chunks).toString("utf8")).ticket : void 0;
+      } catch {
+        ticket = void 0;
+      }
+      const exp = typeof ticket === "string" ? tickets.get(ticket) : void 0;
+      if (typeof ticket === "string") tickets.delete(ticket);
+      if (exp === void 0 || exp <= Date.now()) return reply(res, 401, "ticket expired or already used: run /office again");
+      const key = randomBytes2(32).toString("base64url");
+      keys.push(key);
+      if (keys.length > MAX_KEYS) keys.shift();
+      reply(res, 200, JSON.stringify({ key }), { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    });
   }
   function handleShutdown(req, res) {
     req.resume();
@@ -4296,7 +4345,20 @@ function startEventServer(opts) {
         if (req.method !== "POST") return reply(res, 405, "method not allowed", { Allow: "POST" });
         return handleShutdown(req, res);
       }
+      if (url.pathname === "/ticket") {
+        if (req.method !== "POST") return reply(res, 405, "method not allowed", { Allow: "POST" });
+        return handleTicket(req, res);
+      }
+      if (url.pathname === "/redeem") {
+        if (req.method !== "POST") return reply(res, 405, "method not allowed", { Allow: "POST" });
+        return handleRedeem(req, res);
+      }
       if (req.method !== "GET" && req.method !== "HEAD") return reply(res, 405, "method not allowed");
+      if (url.pathname === "/hello") {
+        const nonce = url.searchParams.get("nonce") ?? "";
+        if (!/^[A-Za-z0-9_-]{16,128}$/.test(nonce)) return reply(res, 400, "nonce: 16-128 url-safe characters");
+        return reply(res, 200, JSON.stringify({ app: "agent-office", proof: proofFor(token, nonce) }), { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      }
       if (url.pathname === "/state") return handleState(req, res);
       if (url.pathname === "/usage") return handleUsage(req, res, url);
       void handleStatic(req, res, url.pathname);
@@ -4318,7 +4380,7 @@ function startEventServer(opts) {
       socket.destroy();
       return;
     }
-    if (!tokenOk(url.searchParams.get("token"), token)) {
+    if (!readOk(url.searchParams.get("token"))) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
@@ -4338,6 +4400,7 @@ function startEventServer(opts) {
       server.removeAllListeners("error");
       server.on("error", () => void 0);
       const actual = server.address().port;
+      boundPort = actual;
       resolveStart({
         url: `http://${HOST}:${actual}`,
         clientCount: () => clients.size,
@@ -5681,7 +5744,7 @@ function makeLogger(dir2) {
 }
 
 // src/tracker/main.ts
-var version = true ? "0.1.9" : "0.0.0";
+var version = true ? "0.1.10" : "0.0.0";
 function flag(name) {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : void 0;
