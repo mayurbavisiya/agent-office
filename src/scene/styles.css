@@ -15,6 +15,9 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 
 .room .dim { opacity: 0; pointer-events: none; transition: opacity .6s; }
 .room.room--dim .dim { opacity: .32; }
+/* the end-of-task party: the room lights up and the lead's sleepy overlays are hidden */
+.room.partying .dim { opacity: 0; }
+.room.partying .char.boss .fx { display: none; }
 .char .tag { pointer-events: none; }
 /* animator: the door leaf swings from its hinge; overlays never catch clicks */
 .doorL { transform-box: fill-box; transform-origin: left center; }

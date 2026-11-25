@@ -1,5 +1,6 @@
 // Life-cycle animations: spawn (door, sparkle, walk to desk), handoff (walk to boss or parent,
-// paper, "Got it, thanks!", confetti, the finisher's victory dance under a disco ball), exit (walk out the door), shift change and room fades.
+// paper, "Got it, thanks!", confetti), the end-of-task party (the lead and its crew dance under a disco
+// ball), exit (walk out the door), exit (walk out the door), shift change and room fades.
 // planAnimations is pure (tested under node); the runner is browser-only (Web Animations API).
 //
 // Status poses (quiet → scratch/sweat/red timer, needs_you → raised hand + "!", idle → zzz,
@@ -15,9 +16,10 @@
 //   status pose. g.dir is flipped (scale(±1,1)) to face the way the character walks.
 // - A character mid handoff/exit carries data-departing; rooms.ts keeps it rendered after its
 //   agent goes 'gone' (and loses its seat) until exit_door finishes and removes it here.
-import type { OfficeEvent, OfficeState } from '../shared/types.js';
+import type { OfficeEvent, OfficeState, PartyGuest } from '../shared/types.js';
 import { HEAD_TOP, TAG_H, handoffTarget, type Point, type RoomLayout } from './layout.js';
-import { STATE_CLASSES, setCheer, setStepClasses, stepClassesOf, svgEl } from './characters.js';
+import { STATE_CLASSES, renderCharacter, setCheer, setStepClasses, stepClassesOf, svgEl } from './characters.js';
+import { humanLook, looksFor } from './looks.js';
 import { layoutOf } from './rooms.js';
 
 export type AnimKind =
@@ -28,6 +30,7 @@ export type AnimKind =
   | 'celebrate'
   | 'exit_door'
   | 'shift_change'
+  | 'party'
   | 'fade_in_room'
   | 'fade_out_room';
 
@@ -37,8 +40,9 @@ export type AnimKind =
  * - give / celebrate are queued on the handing-off agent; targetId names who receives
  *   (and celebrates): 'boss' or the parent agent id.
  * - shift_change: agentId 'boss' of the new session, targetId = the old session id.
+ * - party: agentId 'boss'; crew = the subagents that come back to dance (durationMs is the dance itself).
  */
-export type AnimStep = { agentId: string; sessionId: string; kind: AnimKind; targetId?: string; durationMs: number };
+export type AnimStep = { agentId: string; sessionId: string; kind: AnimKind; targetId?: string; durationMs: number; crew?: PartyGuest[] };
 
 export const ROOM_ACTOR = '';
 
@@ -53,7 +57,8 @@ export const DURATIONS: Record<AnimKind, number> = {
   walk_to_desk: 2000,
   walk_to: 2000,
   give: 800,
-  celebrate: 1800,
+  celebrate: 1200,
+  party: 3600,
   exit_door: 2000,
   shift_change: 2000,
   fade_in_room: 600,
@@ -76,11 +81,11 @@ export function stepClasses(kind: AnimKind): { add: string[]; remove: string[] }
       return { add: ['giving'], remove: ['walking', 'carrying'] };
     case 'exit_door':
       return { add: ['walking'], remove: ['giving', 'carrying', 'sitting', 'dancing'] };
-    case 'celebrate':
-      // the finisher does a little victory dance while the receiver cheers
-      return { add: ['dancing'], remove: ['giving'] };
+    case 'party':
+      // walking to and from the party spot (dancing is added once everyone is there)
+      return { add: ['walking'], remove: ['sitting', 'carrying', 'giving', 'dancing'] };
     default:
-      // room fades have no walker
+      // celebrate: nothing on the walker (the receiver cheers); room fades have no walker
       return { add: [], remove: [] };
   }
 }
@@ -111,6 +116,9 @@ export function planAnimations(events: OfficeEvent[], state: OfficeState): AnimS
         break;
       case 'left':
         add(e.sessionId, e.agentId, 'exit_door');
+        break;
+      case 'party':
+        out.push({ agentId: 'boss', sessionId: e.sessionId, kind: 'party', durationMs: DURATIONS.party, crew: e.crew });
         break;
       case 'shift_change':
         // /clear can emit session_ended then shift_change: the room is taken over, not closed
@@ -341,7 +349,7 @@ export async function walkStep(ctx: Ctx, c: SVGGElement, kind: AnimKind, from: P
   const anim = c.querySelector<SVGGElement>(':scope > .anim');
   if (!anim) return false;
   const { add, remove } = stepClasses(kind);
-  const standUp = !ctx.reduced && (kind === 'walk_to' || kind === 'exit_door') && currentStep(c).includes('sitting');
+  const standUp = !ctx.reduced && (kind === 'walk_to' || kind === 'exit_door' || kind === 'party') && currentStep(c).includes('sitting');
   if (standUp) {
     // stand beside the chair first (the rig eases up), then set off
     applyDelta(c, add.filter((k) => k !== 'walking'), remove);
@@ -488,6 +496,107 @@ function disco(room: SVGGElement, layout: RoomLayout, at: Point, ms: number): vo
   setTimeout(() => g.remove(), ms + 1500);
 }
 
+/** Where the party happens: the middle of the open floor, outside the lead's glass corner. */
+export function partySpots(layout: Pick<RoomLayout, 'rect' | 'bossW' | 'wallH' | 'scale'>, guests: number): { lead: Point; guests: Point[] } {
+  const { w, h } = layout.rect;
+  const cx = layout.bossW + (w - layout.bossW) / 2;
+  const y = Math.round(layout.wallH + (h - layout.wallH) * 0.62);
+  const n = guests + 1;
+  const gap = Math.max(18, Math.min(56 * layout.scale, (w - layout.bossW - 40) / n));
+  const xs = Array.from({ length: n }, (_, i) => Math.round(cx + (i - (n - 1) / 2) * gap));
+  const mid = Math.floor((n - 1) / 2);
+  return { lead: { x: xs[mid]!, y }, guests: xs.filter((_, i) => i !== mid).map((x) => ({ x, y })) };
+}
+
+/**
+ * The end-of-task party: the lead stands up and walks to the middle of the room, the subagents that
+ * worked on the task walk back in through the door, and they all dance under the disco ball. Then the
+ * crew walks out again and the lead goes back to its chair. Guests are drawn in their own layer
+ * (rooms.ts never sees them) and removed at the end, also when the party is cut short.
+ */
+async function party(ctx: Ctx, room: SVGGElement, layout: RoomLayout, lead: SVGGElement, base: Point, off: Point, step: AnimStep, walkMs: number): Promise<boolean> {
+  if (lead.dataset.bust) return false;
+  // hand-offs still on their way to the lead finish first
+  for (let t = 0; t < 8000 && room.querySelector('.people > g.char[data-departing]'); t += 200) await wait(200);
+  const crew = step.crew ?? [];
+  const fx = fxLayer(room);
+  const spots = partySpots(layout, crew.length);
+  if (ctx.reduced) {
+    const tag = pill(fx, { x: spots.lead.x, y: Math.max(16, spots.lead.y - 70) }, layout.rect.w, '🎉 All done!', '#7c3aed', 12);
+    await wait(step.durationMs);
+    tag.parentElement?.remove();
+    return true;
+  }
+  const people = room.querySelector<SVGGElement>('.room-inner > .people');
+  const layer = svgEl('g', { class: 'party' });
+  people ? people.after(layer) : fx.before(layer);
+  room.classList.add('partying');
+  const leadTo = { x: spots.lead.x - base.x, y: spots.lead.y - base.y };
+  try {
+    const guests = crew.map((g) => {
+      const c = renderCharacter({
+        id: `guest:${g.id}`,
+        sessionId: step.sessionId,
+        color: looksFor(g.type).color,
+        human: humanLook(g.id, g.type),
+        mood: 'happy',
+        pose: 'pose-idle',
+        fx: 'none',
+        name: g.name ?? g.type,
+        task: '🎉',
+        tokens: '',
+        scale: layout.scale,
+      });
+      c.setAttribute('transform', `translate(${Math.round(layout.door.x)},${Math.round(layout.door.y)})`);
+      c.dataset.x = String(layout.door.x);
+      c.dataset.y = String(layout.door.y);
+      setStepClasses(c, []);
+      const anim = c.querySelector<SVGGElement>(':scope > .anim');
+      if (anim) anim.style.opacity = '0';
+      layer.appendChild(c);
+      return c;
+    });
+    const zero = { x: 0, y: 0 };
+    openDoor(ctx, room, walkMs + guests.length * 250);
+    const comeIn = guests.map(async (c, i) => {
+      await wait(i * 250);
+      const to = { x: spots.guests[i]!.x - layout.door.x, y: spots.guests[i]!.y - layout.door.y };
+      return walkStep(ctx, c, 'party', zero, to, walkMs, [{ transform: tr(zero), opacity: 0 }, { transform: tr(zero), opacity: 1, offset: 0.15 }, { transform: tr(to), opacity: 1 }]);
+    });
+    const leadIn = walkStep(ctx, lead, 'party', off, leadTo, walkMs);
+    const arrived = await Promise.all([leadIn, ...comeIn]);
+    if (!arrived[0]) return true; // cut short (shift change): the lead is already back in its chair
+
+    // dance!
+    for (const c of [lead, ...guests]) {
+      applyDelta(c, ['dancing'], ['walking']);
+      face(c, 1);
+    }
+    disco(room, layout, spots.lead, step.durationMs);
+    confetti(room, { x: spots.lead.x, y: spots.lead.y - 50 * layout.scale });
+    const tag = pill(fx, { x: spots.lead.x, y: Math.max(16, spots.lead.y - HEAD_TOP * layout.bossScale - TAG_H - 14) }, layout.rect.w, '🎉 All done!', '#7c3aed', 12);
+    await wait(step.durationMs);
+    tag.parentElement?.remove();
+
+    // the crew heads out, the lead goes back to its desk
+    openDoor(ctx, room, walkMs);
+    const goOut = guests.map((c, i) => {
+      const from = { x: spots.guests[i]!.x - layout.door.x, y: spots.guests[i]!.y - layout.door.y };
+      return walkStep(ctx, c, 'party', from, zero, walkMs, [{ transform: tr(from), opacity: 1 }, { transform: tr(zero), opacity: 1, offset: 0.85 }, { transform: tr(zero), opacity: 0 }]);
+    });
+    const back = await walkStep(ctx, lead, 'party', leadTo, zero, walkMs);
+    await Promise.all(goOut);
+    if (back) {
+      settle(lead);
+      restoreSeated(lead);
+    }
+    return true;
+  } finally {
+    layer.remove();
+    room.classList.remove('partying');
+  }
+}
+
 function confetti(room: SVGGElement, at: Point): void {
   const fx = fxLayer(room);
   const g = svgEl('g', { transform: `translate(${Math.round(at.x)},${Math.round(at.y)})` }, fx);
@@ -584,8 +693,6 @@ async function play(step: AnimStep, svg: SVGSVGElement, q: Queue): Promise<boole
       return true;
     }
     case 'celebrate': {
-      const d = stepClasses('celebrate');
-      applyDelta(c, d.add, d.remove);
       const target = receiver(room, layout, step.targetId);
       if (!target) {
         await wait(ms);
@@ -598,7 +705,6 @@ async function play(step: AnimStep, svg: SVGSVGElement, q: Queue): Promise<boole
       bubble.style.transformOrigin = 'bottom left';
       if (!ctx.reduced) {
         confetti(room, { x: target.x + 30 * target.scale, y: target.y - 40 * target.scale });
-        disco(room, layout, { x: base.x + off.x, y: base.y + off.y }, ms);
         // a little hop, added on top of whatever the receiver's wrapper is doing
         target.anim?.animate(
           [{ transform: 'translateY(0px)' }, { transform: 'translateY(-8px)', offset: 0.25 }, { transform: 'translateY(0px)', offset: 0.5 }, { transform: 'translateY(-5px)', offset: 0.7 }, { transform: 'translateY(0px)' }],
@@ -641,6 +747,8 @@ async function play(step: AnimStep, svg: SVGSVGElement, q: Queue): Promise<boole
       else restoreSeated(c);
       return true;
     }
+    case 'party':
+      return party(ctx, room, layout, c, base, off, step, walkMs);
     case 'shift_change': {
       const at = { x: layout.door.x - base.x, y: layout.door.y - base.y };
       doorTag(ctx, room, layout, 'Shift change!', '#8b5cf6', ms * 1.4, false);

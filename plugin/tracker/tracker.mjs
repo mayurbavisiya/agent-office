@@ -4804,6 +4804,7 @@ var MAX_OPEN_TOOLS = 50;
 var RUNNING = /* @__PURE__ */ new Set(["spawning", "working", "quiet"]);
 var NEEDS_YOU_TYPES = /* @__PURE__ */ new Set(["permission_prompt", "elicitation_dialog"]);
 var MAX_REPLACED = 200;
+var PARTY_MAX = 6;
 var isObj3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 var str = (v) => typeof v === "string" && v ? v : void 0;
 function labelFor(cwd) {
@@ -4956,12 +4957,35 @@ var OfficeStore = class {
     const out = [];
     if (!isObj3(e)) return out;
     try {
+      const before = this.bossStatuses();
       this.handleHook(e, now, out);
+      this.parties(before, out);
       this.refreshSubLabels();
     } catch {
     }
     this.notify(out);
     return out;
+  }
+  bossStatuses() {
+    return new Map(Object.values(this.sessions).map((s) => [s.id, s.boss.status]));
+  }
+  /**
+   * A session whose main agent just went idle (its task is done and nobody is still working) throws a
+   * party for the subagents that worked on it, if any did.
+   */
+  parties(before, out) {
+    for (const s of Object.values(this.sessions)) {
+      const m = this.meta.get(s.id);
+      const prev = before.get(s.id);
+      if (!m?.crew?.size || prev === void 0 || prev === "idle" || s.boss.status !== "idle" || s.status === "ended") continue;
+      const crew = [...m.crew].slice(-PARTY_MAX).map(([id, type]) => {
+        const a = s.agents[id];
+        const t = a?.type && a.type !== "unknown" ? a.type : type;
+        return a?.name ? { id, type: t, name: a.name } : { id, type: t };
+      });
+      m.crew.clear();
+      out.push({ kind: "party", sessionId: s.id, crew });
+    }
   }
   /** Sets the session's registry name; notifies only on change. */
   setName(sessionId, name) {
@@ -5016,6 +5040,7 @@ var OfficeStore = class {
     let changed = false;
     try {
       if (!Number.isFinite(now)) return out;
+      const before = this.bossStatuses();
       for (const s of Object.values(this.sessions)) {
         const m = this.meta.get(s.id);
         for (const a of Object.values(s.agents)) {
@@ -5037,6 +5062,7 @@ var OfficeStore = class {
           changed = true;
         }
       }
+      this.parties(before, out);
       if (out.length || changed) this.refreshSubLabels();
     } catch {
     }
@@ -5270,6 +5296,7 @@ var OfficeStore = class {
     if (task) a.task = task;
     if (name) a.name = name;
     s.agents[id] = a;
+    (m.crew ??= /* @__PURE__ */ new Map()).set(id, a.type);
     out.push({ kind: "spawned", sessionId: s.id, agentId: id });
     return a;
   }
@@ -5600,7 +5627,7 @@ function makeLogger(dir2) {
 }
 
 // src/tracker/main.ts
-var version = true ? "0.1.7" : "0.0.0";
+var version = true ? "0.1.8" : "0.0.0";
 function flag(name) {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : void 0;

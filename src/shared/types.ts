@@ -103,11 +103,16 @@ export type Session = {
 
 export type OfficeState = { sessions: Record<string, Session> };
 
+/** A subagent that worked on the task that just finished, back for the party. */
+export type PartyGuest = { id: string; type: string; name?: string };
+
 export type OfficeEvent =
   | { kind: 'spawned'; sessionId: string; agentId: string }
   | { kind: 'handoff'; sessionId: string; agentId: string; toId: string | 'boss' }
   | { kind: 'left'; sessionId: string; agentId: string }
   | { kind: 'shift_change'; fromSessionId: string; toSessionId: string }
+  /** the whole task is done (the main agent stopped and nobody is still working): the crew comes back to celebrate */
+  | { kind: 'party'; sessionId: string; crew: PartyGuest[] }
   | { kind: 'session_started' | 'session_ended'; sessionId: string };
 
 export type ServerMessage =

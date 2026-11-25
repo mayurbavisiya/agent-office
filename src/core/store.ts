@@ -52,7 +52,12 @@ type SessionMeta = {
   retired: Set<string>;
   /** last time the process was seen alive (session registry); the idle timeout counts from here too */
   liveAt?: number;
+  /** subagents that worked on the current task (id → type), oldest first; they come back for its party */
+  crew?: Map<string, string>;
 };
+
+/** At most this many guests come back for a party (the room has to fit them). */
+export const PARTY_MAX = 6;
 
 type TeammateLink = { leadSessionId: string; agentId: string };
 
@@ -252,13 +257,38 @@ export class OfficeStore {
     const out: OfficeEvent[] = [];
     if (!isObj(e)) return out;
     try {
+      const before = this.bossStatuses();
       this.handleHook(e, now, out);
+      this.parties(before, out);
       this.refreshSubLabels();
     } catch {
       // never throw on input; whatever was applied before the fault stays applied
     }
     this.notify(out);
     return out;
+  }
+
+  private bossStatuses(): Map<string, BossStatus> {
+    return new Map(Object.values(this.sessions).map((s) => [s.id, s.boss.status]));
+  }
+
+  /**
+   * A session whose main agent just went idle (its task is done and nobody is still working) throws a
+   * party for the subagents that worked on it, if any did.
+   */
+  private parties(before: Map<string, BossStatus>, out: OfficeEvent[]): void {
+    for (const s of Object.values(this.sessions)) {
+      const m = this.meta.get(s.id);
+      const prev = before.get(s.id);
+      if (!m?.crew?.size || prev === undefined || prev === 'idle' || s.boss.status !== 'idle' || s.status === 'ended') continue;
+      const crew = [...m.crew].slice(-PARTY_MAX).map(([id, type]) => {
+        const a = s.agents[id];
+        const t = a?.type && a.type !== 'unknown' ? a.type : type;
+        return a?.name ? { id, type: t, name: a.name } : { id, type: t };
+      });
+      m.crew.clear();
+      out.push({ kind: 'party', sessionId: s.id, crew });
+    }
   }
 
   /** Sets the session's registry name; notifies only on change. */
@@ -319,6 +349,7 @@ export class OfficeStore {
     let changed = false;
     try {
       if (!Number.isFinite(now)) return out;
+      const before = this.bossStatuses();
       for (const s of Object.values(this.sessions)) {
         const m = this.meta.get(s.id)!;
         for (const a of Object.values(s.agents)) {
@@ -340,6 +371,7 @@ export class OfficeStore {
           changed = true;
         }
       }
+      this.parties(before, out);
       if (out.length || changed) this.refreshSubLabels();
     } catch {
       // never throw
@@ -604,6 +636,7 @@ export class OfficeStore {
     if (task) a.task = task;
     if (name) a.name = name;
     s.agents[id] = a;
+    (m.crew ??= new Map()).set(id, a.type);
     out.push({ kind: 'spawned', sessionId: s.id, agentId: id });
     return a;
   }
