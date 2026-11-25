@@ -1,6 +1,6 @@
 {
   "name": "agent-office",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Watch your Claude Code agents work in a small pixel office",
   "license": "MIT",
   "repository": {

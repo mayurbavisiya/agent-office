@@ -4873,7 +4873,7 @@ function transitionAgent(a, input, now, stuckMs) {
         return "left";
       }
       const idle = now - a.stats.lastActivity;
-      if ((a.status === "spawning" || a.status === "working") && idle >= stuckMs) return set("quiet");
+      if ((a.status === "spawning" || a.status === "working") && idle >= stuckMs && !a.waitingOnYou) return set("quiet");
       if (a.status === "spawning" && now - a.startedAt >= SPAWN_MS) return set("working");
       return null;
     }
@@ -4907,8 +4907,20 @@ function transitionBoss(s, m, input) {
   }
   const running = Object.values(s.agents).some((a) => RUNNING.has(a.status));
   const next = m.needsYou ? "needs_you" : m.main === "working" ? running ? "delegating" : "working" : running ? "waiting_on_team" : "idle";
-  const changed = s.boss.status !== next;
+  let changed = s.boss.status !== next;
   s.boss.status = next;
+  for (const a of Object.values(s.agents)) {
+    const waiting = m.needsYou && m.needsYouBy === a.id && RUNNING.has(a.status);
+    if (!!a.waitingOnYou !== waiting) {
+      if (waiting) a.waitingOnYou = true;
+      else delete a.waitingOnYou;
+      changed = true;
+    }
+    if (waiting && a.status === "quiet") {
+      a.status = "working";
+      changed = true;
+    }
+  }
   return changed;
 }
 var OfficeStore = class {
@@ -5140,9 +5152,13 @@ var OfficeStore = class {
         transitionBoss(s, m, "stop");
         this.adoptBackgroundTasks(s, m, e, now, out);
         break;
+      case "PermissionRequest":
+        m.needsYouBy = agentId ?? null;
+        transitionBoss(s, m, "needs_you");
+        break;
       case "Notification":
         if (isNeedsYouNotification(e)) {
-          m.needsYouBy = agentId ?? m.openTools[m.openTools.length - 1]?.agent ?? null;
+          if (agentId || !m.needsYou || m.needsYouBy == null) m.needsYouBy = agentId ?? m.openTools[m.openTools.length - 1]?.agent ?? null;
           transitionBoss(s, m, "needs_you");
         }
         break;
@@ -5584,7 +5600,7 @@ function makeLogger(dir2) {
 }
 
 // src/tracker/main.ts
-var version = true ? "0.1.4" : "0.0.0";
+var version = true ? "0.1.5" : "0.0.0";
 function flag(name) {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : void 0;

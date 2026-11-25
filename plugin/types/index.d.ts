@@ -15,6 +15,7 @@ export type AgentOfficeAgent = {
   name?: string
   task?: string
   status: 'spawning' | 'working' | 'quiet' | 'handing_off' | 'gone'
+  waitingOnYou?: true
   startedAt: number
   endedAt?: number
   stats: AgentOfficeStats

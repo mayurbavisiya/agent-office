@@ -224,3 +224,6 @@ html.shell #usage:not([hidden]) ~ #floor, html.shell #usage:not([hidden]) ~ #emp
 html.shell #usage-details { top: calc(18px + var(--usage-h)); }
 @media (max-width: 720px) { .u-cache { display: none; } }
 @media (max-width: 520px) { .u-stats span:nth-child(3) { display: none; } #usage { gap: 8px; } }
+
+/* a subagent blocked on the person: amber task line on its name tag */
+.char.waiting .task { fill: #b45309; font-weight: 700; }

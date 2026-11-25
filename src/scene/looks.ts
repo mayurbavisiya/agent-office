@@ -72,12 +72,14 @@ export function humanLook(id: string, type: string | 'boss'): HumanLook {
 export function poseClass(look: StatusLook, isBoss: boolean): PoseClass {
   if (look.pose === 'type') return 'pose-type';
   if (look.fx === 'stuck') return 'pose-slump';
-  if (isBoss && look.pose === 'raise_hand') return 'pose-wave';
+  if (look.pose === 'raise_hand') return 'pose-wave';
   if (isBoss && look.fx === 'tap') return 'pose-lean';
   return 'pose-idle';
 }
 
-export function agentLook(status: AgentStatus): StatusLook {
+/** `waiting`: the agent is blocked on the person (its permission prompt or question is open). */
+export function agentLook(status: AgentStatus, waiting = false): StatusLook {
+  if (waiting && status !== 'handing_off' && status !== 'gone') return { pose: 'raise_hand', mood: 'worried', screen: 'code', fx: 'alert', dim: false };
   switch (status) {
     case 'quiet':
       return { pose: 'scratch', mood: 'worried', screen: 'err', fx: 'stuck', dim: false };

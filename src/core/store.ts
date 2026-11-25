@@ -149,7 +149,8 @@ function transitionAgent(a: Agent, input: AgentInput, now: number, stuckMs: numb
         return 'left';
       }
       const idle = now - a.stats.lastActivity;
-      if ((a.status === 'spawning' || a.status === 'working') && idle >= stuckMs) return set('quiet');
+      // an agent waiting on the person is not stuck, however long the prompt stays open
+      if ((a.status === 'spawning' || a.status === 'working') && idle >= stuckMs && !a.waitingOnYou) return set('quiet');
       if (a.status === 'spawning' && now - a.startedAt >= SPAWN_MS) return set('working');
       return null;
     }
@@ -193,8 +194,21 @@ function transitionBoss(s: Session, m: SessionMeta, input: BossInput): boolean {
     : m.main === 'working'
       ? running ? 'delegating' : 'working'
       : running ? 'waiting_on_team' : 'idle';
-  const changed = s.boss.status !== next;
+  let changed = s.boss.status !== next;
   s.boss.status = next;
+  // the subagent that raised the open prompt is waiting on the person: flag it (and un-stick it)
+  for (const a of Object.values(s.agents)) {
+    const waiting = m.needsYou && m.needsYouBy === a.id && RUNNING.has(a.status);
+    if (!!a.waitingOnYou !== waiting) {
+      if (waiting) a.waitingOnYou = true;
+      else delete a.waitingOnYou;
+      changed = true;
+    }
+    if (waiting && a.status === 'quiet') {
+      a.status = 'working';
+      changed = true;
+    }
+  }
   return changed;
 }
 
@@ -455,10 +469,16 @@ export class OfficeStore {
         transitionBoss(s, m, 'stop');
         this.adoptBackgroundTasks(s, m, e, now, out);
         break;
+      case 'PermissionRequest':
+        // fires the moment a permission dialog opens, before the Notification, and names the subagent asking
+        m.needsYouBy = agentId ?? null;
+        transitionBoss(s, m, 'needs_you');
+        break;
       case 'Notification':
         if (isNeedsYouNotification(e)) {
           // the notification names its agent when it has one; otherwise the newest open tool call raised it
-          m.needsYouBy = agentId ?? m.openTools[m.openTools.length - 1]?.agent ?? null;
+          // a Notification names no agent (verified): keep the asker a PermissionRequest already named
+          if (agentId || !m.needsYou || m.needsYouBy == null) m.needsYouBy = agentId ?? m.openTools[m.openTools.length - 1]?.agent ?? null;
           transitionBoss(s, m, 'needs_you');
         }
         break;

@@ -98,6 +98,7 @@ export function panelModel(target: PanelTarget, now: number): PanelModel | null 
   else {
     [statusLabel, statusColor] = AGENT_STATUS[agent!.status] ?? [String(agent!.status), '#64748b'];
     if (agent!.status === 'quiet') statusLabel += ` · ${formatDuration(now - st.lastActivity)} quiet`;
+    if (agent!.waitingOnYou && agent!.status !== 'handing_off' && agent!.status !== 'gone') [statusLabel, statusColor] = ['Waiting on you · its prompt is open', '#d97706'];
   }
 
   const noUsage = !hasUsage(st);

@@ -25,6 +25,7 @@ A panel opens beside the chat. You need Node 20 or newer on your PATH. Tested on
 - One room per Claude Code session, with a pixel person for each agent.
 - A usage bar across the top of the browser office: tokens and estimated cost across all your Claude Code sessions for today, this week (from Monday), this month, or a custom date range. "Details" opens a table with a row per day and per model (input, output, cache write, cache read, total, cost), like `ccusage`. The panel in Claude shows a "today" line.
 - A visitor chair at the main agent's desk: it lights up amber with "your turn" when the session is waiting on you (a permission prompt, a question, or your reply). The browser tab title counts those rooms, e.g. "(2) Agent Office", and the panel in Claude marks them "▶ your turn".
+- A subagent blocked on a permission prompt is flagged too: it raises its hand, its tag reads "waiting on you" in amber, and its details say its prompt is open. It never shows as "maybe stuck" while it waits. (The plugin registers Claude Code's `PermissionRequest` hook for this; it only watches, it never answers a prompt.)
 - Name chips under the rooms. Press a chip to open that agent's details (type, task, status, tokens, estimated cost, running time and last activity). Press close to go back.
 - "+N more" in the room view when there are more rooms than fit, and "+N" at the end of the chip row when there are more chips than fit.
 - `/office` also prints the full office link. Open it in a browser to see the animated office.

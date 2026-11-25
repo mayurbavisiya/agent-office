@@ -1,6 +1,6 @@
 {
   "name": "agent-office",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Agent Office: /office opens a panel of your Claude Code agents, and hook events are forwarded to the tracker or app",
   "author": { "name": "Mayur Bavisia", "url": "https://github.com/mayurbavisiya" },
   "homepage": "https://github.com/mayurbavisiya/agent-office",

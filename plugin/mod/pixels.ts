@@ -24,6 +24,8 @@ export type PxAgent = {
   name?: string;
   task?: string;
   status: AgentStatus;
+  /** blocked on the person: its permission prompt or question is open */
+  waitingOnYou?: true;
   startedAt: number;
   endedAt?: number;
   stats: PxStats;
@@ -195,6 +197,7 @@ function parseAgent(v: unknown): PxAgent | null {
   if (name !== undefined) a.name = name;
   if (task !== undefined) a.task = task;
   if (typeof v.endedAt === 'number') a.endedAt = v.endedAt;
+  if (v.waitingOnYou === true) a.waitingOnYou = true;
   return a;
 }
 
@@ -302,6 +305,12 @@ const ROOM_H = 6;
 const MIN_ROOM_W = 20;
 const roomLabel = (s: PxSession) => s.name || s.label;
 
+/** " (scout asks)" when a helper raised the open prompt, else "". */
+const asking = (helpers: PxAgent[]) => {
+  const a = helpers.find(h => h.waitingOnYou);
+  return a ? ` (${a.name || a.type} asks)` : '';
+};
+
 function roomModel(s: PxSession): Omit<RoomModel, 'x' | 'y' | 'w' | 'h'> {
   const helpers = liveHelpers(s);
   const counts = [s.boss.stats, ...helpers.map(a => a.stats)].map(live).filter((n): n is number => n !== undefined);
@@ -311,7 +320,7 @@ function roomModel(s: PxSession): Omit<RoomModel, 'x' | 'y' | 'w' | 'h'> {
     label: roomLabel(s),
     boss: s.boss.status,
     helpers: helpers.map(a => ({ agentId: a.id, label: a.name || a.type, color: colorFor(a.type), status: a.status })),
-    status: `${s.boss.status === 'needs_you' ? '▶ your turn: ' : ''}${BOSS_WORDS[s.boss.status]} · ${helpers.length} helper${helpers.length === 1 ? '' : 's'} · ${tokens} tokens in memory`,
+    status: `${s.boss.status === 'needs_you' ? `▶ your turn${asking(helpers)}: ` : ''}${BOSS_WORDS[s.boss.status]} · ${helpers.length} helper${helpers.length === 1 ? '' : 's'} · ${tokens} tokens in memory`,
   };
 }
 
@@ -725,7 +734,7 @@ export function detailsFor(state: PxState, sel: { sessionId: string; agentId: st
     lines: [
       `type: ${a.type}`,
       `task: ${a.task ?? DASH}`,
-      `status: ${AGENT_WORDS[a.status]}`,
+      `status: ${a.waitingOnYou && a.status !== 'handing_off' && a.status !== 'gone' ? 'waiting on you (its prompt is open)' : AGENT_WORDS[a.status]}`,
       tokens(st),
       billing(st),
       cost(st),

@@ -103,6 +103,17 @@
         ],
         "matcher": "*"
       }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PLUGIN_ROOT\"/scripts/forward.sh",
+            "async": true
+          }
+        ]
+      }
     ]
   }
 }

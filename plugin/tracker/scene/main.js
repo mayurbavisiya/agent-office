@@ -44,11 +44,12 @@ function humanLook(id, type) {
 function poseClass(look, isBoss) {
   if (look.pose === "type") return "pose-type";
   if (look.fx === "stuck") return "pose-slump";
-  if (isBoss && look.pose === "raise_hand") return "pose-wave";
+  if (look.pose === "raise_hand") return "pose-wave";
   if (isBoss && look.fx === "tap") return "pose-lean";
   return "pose-idle";
 }
-function agentLook(status) {
+function agentLook(status, waiting = false) {
+  if (waiting && status !== "handing_off" && status !== "gone") return { pose: "raise_hand", mood: "worried", screen: "code", fx: "alert", dim: false };
   switch (status) {
     case "quiet":
       return { pose: "scratch", mood: "worried", screen: "err", fx: "stuck", dim: false };
@@ -396,6 +397,7 @@ function panelModel(target, now) {
   else {
     [statusLabel, statusColor] = AGENT_STATUS[agent.status] ?? [String(agent.status), "#64748b"];
     if (agent.status === "quiet") statusLabel += ` \xB7 ${formatDuration(now - st.lastActivity)} quiet`;
+    if (agent.waitingOnYou && agent.status !== "handing_off" && agent.status !== "gone") [statusLabel, statusColor] = ["Waiting on you \xB7 its prompt is open", "#d97706"];
   }
   const noUsage = !hasUsage(st);
   const tok = (n) => noUsage ? DASH : formatTokens(n);
@@ -1050,9 +1052,9 @@ function drawBoard(board, bg, l, agents) {
   const rows = Math.min(4, Math.floor((wh - 20) / 13));
   const chars = Math.floor((ww - 20) / 4.7);
   agents.slice(0, rows).forEach((a, i) => {
-    const look = agentLook(a.status);
-    const t = svgEl("text", { x: 8, y: 30 + i * 13, "font-size": 8.5, fill: look.fx === "stuck" ? "#dc2626" : "#555" }, g);
-    t.textContent = `${a.status === "handing_off" ? "\u2713" : "\u25FB"} ${truncate(a.task ?? a.name ?? a.type, chars)}`;
+    const look = agentLook(a.status, !!a.waitingOnYou);
+    const t = svgEl("text", { x: 8, y: 30 + i * 13, "font-size": 8.5, fill: look.fx === "stuck" ? "#dc2626" : a.waitingOnYou ? "#b45309" : "#555" }, g);
+    t.textContent = `${a.status === "handing_off" ? "\u2713" : a.waitingOnYou ? "\u25B6" : "\u25FB"} ${truncate(a.task ?? a.name ?? a.type, chars)}`;
   });
 }
 function placeDesk(desks, key, x, y, s, screen, sessionId) {
@@ -1167,7 +1169,7 @@ function updateRoom(g, session, rect) {
     const seat = l.seats[a.id];
     keep.add(a.id);
     const look = looksFor(a.type);
-    const st = agentLook(a.status);
+    const st = agentLook(a.status, !!a.waitingOnYou);
     placeDesk(desks, a.id, seat.x, seat.y, l.scale, st.screen, sid);
     const c = placeCharacter(
       people,
@@ -1181,7 +1183,7 @@ function updateRoom(g, session, rect) {
         fx: st.fx,
         since: a.stats.lastActivity,
         name: a.name ?? a.type,
-        task: truncate(a.task, l.taskChars),
+        task: a.waitingOnYou ? "waiting on you" : truncate(a.task, l.taskChars),
         tokens: tokText(a.stats),
         scale: l.scale
       },
@@ -1189,6 +1191,7 @@ function updateRoom(g, session, rect) {
       seat.y
     );
     c.dataset.status = a.status;
+    c.classList.toggle("waiting", !!a.waitingOnYou);
     c.dataset.depth = String(seat.depth);
     if (a.parentId) c.dataset.parentId = a.parentId;
     else delete c.dataset.parentId;

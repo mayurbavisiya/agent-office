@@ -132,9 +132,9 @@ function drawBoard(board: SVGGElement, bg: SVGGElement, l: RoomLayout, agents: A
   const rows = Math.min(4, Math.floor((wh - 20) / 13));
   const chars = Math.floor((ww - 20) / 4.7);
   agents.slice(0, rows).forEach((a, i) => {
-    const look = agentLook(a.status);
-    const t = svgEl('text', { x: 8, y: 30 + i * 13, 'font-size': 8.5, fill: look.fx === 'stuck' ? '#dc2626' : '#555' }, g);
-    t.textContent = `${a.status === 'handing_off' ? '✓' : '◻'} ${truncate(a.task ?? a.name ?? a.type, chars)}`;
+    const look = agentLook(a.status, !!a.waitingOnYou);
+    const t = svgEl('text', { x: 8, y: 30 + i * 13, 'font-size': 8.5, fill: look.fx === 'stuck' ? '#dc2626' : a.waitingOnYou ? '#b45309' : '#555' }, g);
+    t.textContent = `${a.status === 'handing_off' ? '✓' : a.waitingOnYou ? '▶' : '◻'} ${truncate(a.task ?? a.name ?? a.type, chars)}`;
   });
 }
 
@@ -271,7 +271,7 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
     const seat = l.seats[a.id];
     keep.add(a.id);
     const look = looksFor(a.type);
-    const st = agentLook(a.status);
+    const st = agentLook(a.status, !!a.waitingOnYou);
     placeDesk(desks, a.id, seat.x, seat.y, l.scale, st.screen, sid);
     const c = placeCharacter(
       people,
@@ -285,7 +285,7 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
         fx: st.fx,
         since: a.stats.lastActivity,
         name: a.name ?? a.type,
-        task: truncate(a.task, l.taskChars),
+        task: a.waitingOnYou ? 'waiting on you' : truncate(a.task, l.taskChars),
         tokens: tokText(a.stats),
         scale: l.scale,
       },
@@ -293,6 +293,7 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
       seat.y,
     );
     c.dataset.status = a.status;
+    c.classList.toggle('waiting', !!a.waitingOnYou);
     c.dataset.depth = String(seat.depth);
     if (a.parentId) c.dataset.parentId = a.parentId;
     else delete c.dataset.parentId;

@@ -169,3 +169,7 @@ every field as optional and tolerate garbage.
   the model reads nothing, so `/office` costs no tokens. The transcript row still holds the link.
 - `isTextDisplayOnly` is ignored when `/office` is queued mid-turn, so the model may then see the link
   (with its token) in that turn.
+
+## PermissionRequest and Notification (verified on Claude Code 2.1.332)
+
+A subagent's permission prompt sends `PermissionRequest` first, with that subagent's `agent_id`, `agent_type` and `tool_name`, then a `Notification` (`notification_type: "permission_prompt"`) with **no** `agent_id`. So the tracker takes the asker from `PermissionRequest` and does not let the unnamed `Notification` replace it. The plugin registers `PermissionRequest` as an async command hook that prints nothing, so it never decides the prompt: the dialog shows as usual. A main-agent question (AskUserQuestion) raises a `Notification` too, and the room goes to "needs you" a few seconds after the question appears.

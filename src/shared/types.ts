@@ -76,6 +76,8 @@ export type Agent = {
   /** Agent tool_input.name (named agents) or teammate name, when known */
   name?: string;
   status: AgentStatus;
+  /** set while this agent is blocked on the person (its permission prompt or question is open); never counts as stuck */
+  waitingOnYou?: true;
   startedAt: number;
   endedAt?: number;
   stats: AgentStats;

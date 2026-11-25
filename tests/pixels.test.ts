@@ -363,3 +363,18 @@ describe('today usage line', () => {
     expect(todayLine(undefined)).toBe('');
   });
 });
+
+describe('waiting subagent in the Claude panel', () => {
+  it('names the helper that asked and words its status', async () => {
+    const { parseSnapshot, layoutPanel, detailsFor } = await import('../plugin/mod/pixels.js');
+    const stats = { inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, lastActivity: 0 };
+    const snap = parseSnapshot({ seq: 1, state: { sessions: { S1: { id: 'S1', label: 'proj', status: 'active', lastActivity: 0,
+      boss: { status: 'needs_you', startedAt: 0, stats },
+      agents: { A1: { id: 'A1', type: 'general-purpose', name: 'scout', status: 'working', waitingOnYou: true, startedAt: 0, stats } } } } } })!;
+    expect(snap.state.sessions.S1!.agents.A1!.waitingOnYou).toBe(true);
+    const m = layoutPanel(snap.state, 120, 40);
+    if (m.mode !== 'rooms') throw new Error('expected rooms');
+    expect(m.rooms[0]!.status.startsWith('▶ your turn (scout asks): needs you')).toBe(true);
+    expect(detailsFor(snap.state, { sessionId: 'S1', agentId: 'A1' }, 0)!.lines).toContain('status: waiting on you (its prompt is open)');
+  });
+});
