@@ -2,7 +2,7 @@
 // Every untrusted string reaches the DOM through textContent, never innerHTML.
 import type { Agent, AgentStats, AgentStatus, BossStatus, OfficeState, Session } from '../shared/types.js';
 import { contextSize, estimateCost } from '../core/pricing.js';
-import { liveTokens, looksFor } from './looks.js';
+import { liveTokens, looksFor, toolNote } from './looks.js';
 import { roomTitle } from './layout.js';
 
 const DASH = '—';
@@ -94,10 +94,23 @@ export function panelModel(target: PanelTarget, now: number): PanelModel | null 
 
   let statusLabel: string;
   let statusColor: string;
-  if (isBoss) [statusLabel, statusColor] = BOSS_STATUS[session.boss.status] ?? [String(session.boss.status), '#64748b'];
-  else {
+  // a loop, or a long tool call: the same note the name tag shows, in words
+  const toolLine = (o: { tool?: { name: string; since: number }; looping?: { tool: string; count: number } }): [string, string] | undefined => {
+    const n = toolNote(o, now);
+    if (!n) return undefined;
+    return n.kind === 'looping'
+      ? [`Looping? Same ${o.looping!.tool} call ${o.looping!.count}× in a row`, '#e11d48']
+      : [`Running ${o.tool!.name} · ${formatDuration(now - o.tool!.since)} (busy, not stuck)`, '#2563eb'];
+  };
+  if (isBoss) {
+    [statusLabel, statusColor] = BOSS_STATUS[session.boss.status] ?? [String(session.boss.status), '#64748b'];
+    const line = session.boss.status !== 'idle' && session.boss.status !== 'needs_you' && session.status !== 'ended' ? toolLine(session.boss) : undefined;
+    if (line) [statusLabel, statusColor] = line;
+  } else {
     [statusLabel, statusColor] = AGENT_STATUS[agent!.status] ?? [String(agent!.status), '#64748b'];
     if (agent!.status === 'quiet') statusLabel += ` · ${formatDuration(now - st.lastActivity)} quiet`;
+    const line = agent!.status !== 'handing_off' && agent!.status !== 'gone' ? toolLine(agent!) : undefined;
+    if (line) [statusLabel, statusColor] = line;
     if (agent!.waitingOnYou && agent!.status !== 'handing_off' && agent!.status !== 'gone') [statusLabel, statusColor] = ['Waiting on you · its prompt is open', '#d97706'];
   }
 

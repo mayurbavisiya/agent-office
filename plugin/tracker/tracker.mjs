@@ -4801,6 +4801,27 @@ var LINGER_MS = 6e4;
 var SPAWN_MS = 2e3;
 var MAX_PENDING = 100;
 var MAX_OPEN_TOOLS = 50;
+var TOOL_STUCK_MS = 20 * 6e4;
+var LOOP_AT = 3;
+var POLLING_TOOLS = /* @__PURE__ */ new Set(["BashOutput", "TaskOutput", "TaskGet", "TaskList", "Monitor", "Sleep", "SubagentHandback", "TodoWrite"]);
+var DELEGATING_TOOLS = /* @__PURE__ */ new Set(["Agent", "Task"]);
+function fnv(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function callSig(tool, input) {
+  let json;
+  try {
+    json = JSON.stringify(input ?? null) ?? "null";
+  } catch {
+    json = String(input);
+  }
+  return `${tool}:${fnv(json).toString(16)}`;
+}
 var RUNNING = /* @__PURE__ */ new Set(["spawning", "working", "quiet"]);
 var NEEDS_YOU_TYPES = /* @__PURE__ */ new Set(["permission_prompt", "elicitation_dialog"]);
 var MAX_REPLACED = 200;
@@ -4874,7 +4895,8 @@ function transitionAgent(a, input, now, stuckMs) {
         return "left";
       }
       const idle = now - a.stats.lastActivity;
-      if ((a.status === "spawning" || a.status === "working") && idle >= stuckMs && !a.waitingOnYou) return set("quiet");
+      const busy = !!a.tool && now - a.tool.since < TOOL_STUCK_MS;
+      if ((a.status === "spawning" || a.status === "working") && idle >= stuckMs && !a.waitingOnYou && !busy) return set("quiet");
       if (a.status === "spawning" && now - a.startedAt >= SPAWN_MS) return set("working");
       return null;
     }
@@ -5133,14 +5155,17 @@ var OfficeStore = class {
         break;
       }
       case "PreToolUse":
-      case "PostToolUse": {
+      case "PostToolUse":
+      case "PostToolUseFailure": {
         const tool = str(e.tool_name);
         const caller = agentId ?? null;
         if (m.needsYou && (m.needsYouBy ?? null) === caller) transitionBoss(s, m, "answered");
-        this.trackOpenTool(m, name, str(e.tool_use_id), caller);
+        this.trackOpenTool(m, name, str(e.tool_use_id), caller, tool, now);
+        if (name === "PreToolUse" && tool) this.trackRepeats(s, m, caller, tool, e.tool_input);
         if (tool === "SubagentHandback") break;
         if (agentId) this.agentActivity(s, m, agentId, e, now, out);
         else transitionBoss(s, m, "main_activity");
+        this.syncOpenTool(s, m, caller);
         if (tool === "Agent") {
           if (name === "PreToolUse") this.recordPending(m, e, agentId);
           else this.linkFromPostToolUse(s, m, e, now, out);
@@ -5168,6 +5193,11 @@ var OfficeStore = class {
           const a = this.ensureAgent(s, m, agentId, now, out, { type: str(e.agent_type) });
           if (m.needsYou && m.needsYouBy === agentId) transitionBoss(s, m, "answered");
           m.openTools = m.openTools.filter((t) => t.agent !== agentId);
+          m.lastCalls?.delete(agentId);
+          if (a) {
+            delete a.tool;
+            delete a.looping;
+          }
           if (a && transitionAgent(a, "stop", now, this.stuckMs) === "handoff") {
             out.push({ kind: "handoff", sessionId: sid, agentId, toId: a.parentId ?? "boss" });
           }
@@ -5175,6 +5205,9 @@ var OfficeStore = class {
         break;
       case "Stop":
         m.openTools = m.openTools.filter((t) => t.agent !== null);
+        m.lastCalls?.delete("");
+        delete s.boss.tool;
+        delete s.boss.looping;
         transitionBoss(s, m, "stop");
         this.adoptBackgroundTasks(s, m, e, now, out);
         break;
@@ -5262,14 +5295,35 @@ var OfficeStore = class {
     out.push({ kind: "shift_change", fromSessionId: from.id, toSessionId: sid });
     return true;
   }
-  trackOpenTool(m, name, toolUseId, agent) {
+  trackOpenTool(m, name, toolUseId, agent, tool, now) {
     if (name === "PreToolUse") {
-      m.openTools.push({ id: toolUseId, agent });
+      m.openTools.push({ id: toolUseId, agent, ...tool ? { name: tool } : {}, ...now !== void 0 ? { at: now } : {} });
       if (m.openTools.length > MAX_OPEN_TOOLS) m.openTools = m.openTools.slice(-MAX_OPEN_TOOLS);
       return;
     }
     const i = toolUseId ? m.openTools.findIndex((t) => t.id === toolUseId) : m.openTools.findIndex((t) => t.agent === agent);
     if (i >= 0) m.openTools.splice(i, 1);
+  }
+  /** Mirrors the agent's (or the main agent's) oldest open tool call into the snapshot as `tool`. */
+  syncOpenTool(s, m, agent) {
+    const holder = agent === null ? s.boss : s.agents[agent];
+    if (!holder) return;
+    const open3 = m.openTools.find((t) => t.agent === agent && t.name && t.at !== void 0 && !POLLING_TOOLS.has(t.name) && !DELEGATING_TOOLS.has(t.name));
+    if (open3) holder.tool = { name: open3.name, since: open3.at };
+    else delete holder.tool;
+  }
+  /** Counts identical tool calls in a row per agent; LOOP_AT or more flags `looping`, any other call clears it. */
+  trackRepeats(s, m, agent, tool, input) {
+    const holder = agent === null ? s.boss : s.agents[agent];
+    if (!holder || POLLING_TOOLS.has(tool)) return;
+    const calls = m.lastCalls ??= /* @__PURE__ */ new Map();
+    const key = agent ?? "";
+    const sig = callSig(tool, input);
+    const prev = calls.get(key);
+    const count = prev && prev.sig === sig ? prev.count + 1 : 1;
+    calls.set(key, { sig, tool, count });
+    if (count >= LOOP_AT) holder.looping = { tool, count };
+    else delete holder.looping;
   }
   /**
    * Returns the agent, creating it on demand (emits `spawned`). Returns undefined for retired agents.
@@ -5627,7 +5681,7 @@ function makeLogger(dir2) {
 }
 
 // src/tracker/main.ts
-var version = true ? "0.1.8" : "0.0.0";
+var version = true ? "0.1.9" : "0.0.0";
 function flag(name) {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : void 0;

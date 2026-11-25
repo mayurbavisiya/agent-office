@@ -26,6 +26,10 @@ export type PxAgent = {
   status: AgentStatus;
   /** blocked on the person: its permission prompt or question is open */
   waitingOnYou?: true;
+  /** the tool call it is in the middle of */
+  tool?: { name: string; since: number };
+  /** the same tool call this many times in a row */
+  looping?: { tool: string; count: number };
   startedAt: number;
   endedAt?: number;
   stats: PxStats;
@@ -198,7 +202,18 @@ function parseAgent(v: unknown): PxAgent | null {
   if (task !== undefined) a.task = task;
   if (typeof v.endedAt === 'number') a.endedAt = v.endedAt;
   if (v.waitingOnYou === true) a.waitingOnYou = true;
+  if (isRec(v.tool) && typeof v.tool.name === 'string' && typeof v.tool.since === 'number') a.tool = { name: v.tool.name, since: v.tool.since };
+  if (isRec(v.looping) && typeof v.looping.tool === 'string' && typeof v.looping.count === 'number') a.looping = { tool: v.looping.tool, count: v.looping.count };
   return a;
+}
+
+/** A helper's status in words: waiting on you, looping, a long tool call, or its plain status. */
+export function agentStatusWords(a: PxAgent, now: number): string {
+  const present = a.status !== 'handing_off' && a.status !== 'gone';
+  if (a.waitingOnYou && present) return 'waiting on you (its prompt is open)';
+  if (a.looping && present) return `looping? same ${a.looping.tool} call ${a.looping.count}× in a row`;
+  if (a.tool && present && now - a.tool.since >= 30_000) return `running ${a.tool.name} for ${Math.floor((now - a.tool.since) / 60_000)}m${Math.floor(((now - a.tool.since) % 60_000) / 1000).toString().padStart(2, '0')}s (busy, not stuck)`;
+  return AGENT_WORDS[a.status];
 }
 
 function parseSession(v: unknown): PxSession | null {
@@ -311,6 +326,12 @@ const asking = (helpers: PxAgent[]) => {
   return a ? ` (${a.name || a.type} asks)` : '';
 };
 
+/** " · ↻ scout looping?" when a helper keeps making the same call, else "". */
+const loopNote = (helpers: PxAgent[]) => {
+  const a = helpers.find(h => h.looping && !h.waitingOnYou);
+  return a ? ` · ↻ ${a.name || a.type} looping?` : '';
+};
+
 function roomModel(s: PxSession): Omit<RoomModel, 'x' | 'y' | 'w' | 'h'> {
   const helpers = liveHelpers(s);
   const counts = [s.boss.stats, ...helpers.map(a => a.stats)].map(live).filter((n): n is number => n !== undefined);
@@ -320,7 +341,7 @@ function roomModel(s: PxSession): Omit<RoomModel, 'x' | 'y' | 'w' | 'h'> {
     label: roomLabel(s),
     boss: s.boss.status,
     helpers: helpers.map(a => ({ agentId: a.id, label: a.name || a.type, color: colorFor(a.type), status: a.status })),
-    status: `${s.boss.status === 'needs_you' ? `▶ your turn${asking(helpers)}: ` : ''}${BOSS_WORDS[s.boss.status]} · ${helpers.length} helper${helpers.length === 1 ? '' : 's'} · ${tokens} tokens in memory`,
+    status: `${s.boss.status === 'needs_you' ? `▶ your turn${asking(helpers)}: ` : ''}${BOSS_WORDS[s.boss.status]} · ${helpers.length} helper${helpers.length === 1 ? '' : 's'}${loopNote(helpers)} · ${tokens} tokens in memory`,
   };
 }
 
@@ -734,7 +755,7 @@ export function detailsFor(state: PxState, sel: { sessionId: string; agentId: st
     lines: [
       `type: ${a.type}`,
       `task: ${a.task ?? DASH}`,
-      `status: ${a.waitingOnYou && a.status !== 'handing_off' && a.status !== 'gone' ? 'waiting on you (its prompt is open)' : AGENT_WORDS[a.status]}`,
+      `status: ${agentStatusWords(a, now)}`,
       tokens(st),
       billing(st),
       cost(st),

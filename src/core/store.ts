@@ -17,6 +17,35 @@ export const SPAWN_MS = 2_000;
 const MAX_PENDING = 100;
 /** open PreToolUse calls remembered per session (to know which agent a permission prompt belongs to) */
 const MAX_OPEN_TOOLS = 50;
+/** an agent in the middle of one tool call this long (a hung command) does count as maybe stuck again */
+export const TOOL_STUCK_MS = 20 * 60_000;
+/** the same tool call this many times in a row flags "looping?" */
+export const LOOP_AT = 3;
+/** tools that are meant to be called again and again with the same input (polling, waiting) */
+const POLLING_TOOLS = new Set(['BashOutput', 'TaskOutput', 'TaskGet', 'TaskList', 'Monitor', 'Sleep', 'SubagentHandback', 'TodoWrite']);
+/** calls that just wait on another agent (it shows its own work): never a "running" note */
+const DELEGATING_TOOLS = new Set(['Agent', 'Task']);
+
+/** FNV-1a 32-bit, for tool-call signatures. */
+function fnv(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** "Read:1234abcd": the tool and a hash of its input, so identical calls compare equal. */
+function callSig(tool: string, input: unknown): string {
+  let json: string;
+  try {
+    json = JSON.stringify(input ?? null) ?? 'null';
+  } catch {
+    json = String(input);
+  }
+  return `${tool}:${fnv(json).toString(16)}`;
+}
 const RUNNING: ReadonlySet<AgentStatus> = new Set(['spawning', 'working', 'quiet']);
 /** idle_prompt is deliberately absent: it fires ~60 s after Stop, which is the spec's idle (sleeping) state. */
 const NEEDS_YOU_TYPES = new Set(['permission_prompt', 'elicitation_dialog']);
@@ -42,7 +71,9 @@ type SessionMeta = {
   /** who raised needsYou: an agent id, or null for the main agent */
   needsYouBy?: string | null;
   /** PreToolUse calls without their PostToolUse yet, oldest first (agent null = main) */
-  openTools: Array<{ id?: string; agent: string | null }>;
+  openTools: Array<{ id?: string; agent: string | null; name?: string; at?: number }>;
+  /** each agent's last tool call signature and how many times in a row it was made (key '' = main) */
+  lastCalls?: Map<string, { sig: string; tool: string; count: number }>;
   /** the session ended with SessionEnd(reason: clear): a /clear successor may take its room over */
   endedByClear?: boolean;
   title?: string;
@@ -155,7 +186,9 @@ function transitionAgent(a: Agent, input: AgentInput, now: number, stuckMs: numb
       }
       const idle = now - a.stats.lastActivity;
       // an agent waiting on the person is not stuck, however long the prompt stays open
-      if ((a.status === 'spawning' || a.status === 'working') && idle >= stuckMs && !a.waitingOnYou) return set('quiet');
+      // a long tool call (a test run, a build) is busy, not stuck, unless it has been running for ages
+      const busy = !!a.tool && now - a.tool.since < TOOL_STUCK_MS;
+      if ((a.status === 'spawning' || a.status === 'working') && idle >= stuckMs && !a.waitingOnYou && !busy) return set('quiet');
       if (a.status === 'spawning' && now - a.startedAt >= SPAWN_MS) return set('working');
       return null;
     }
@@ -455,15 +488,18 @@ export class OfficeStore {
         break;
       }
       case 'PreToolUse':
-      case 'PostToolUse': {
+      case 'PostToolUse':
+      case 'PostToolUseFailure': {
         const tool = str(e.tool_name);
         const caller = agentId ?? null;
         // the agent that raised the prompt moved on: it was answered
         if (m.needsYou && (m.needsYouBy ?? null) === caller) transitionBoss(s, m, 'answered');
-        this.trackOpenTool(m, name, str(e.tool_use_id), caller);
+        this.trackOpenTool(m, name, str(e.tool_use_id), caller, tool, now);
+        if (name === 'PreToolUse' && tool) this.trackRepeats(s, m, caller, tool, e.tool_input);
         if (tool === 'SubagentHandback') break; // internal tool: not activity (hook-notes §1)
         if (agentId) this.agentActivity(s, m, agentId, e, now, out);
         else transitionBoss(s, m, 'main_activity');
+        this.syncOpenTool(s, m, caller);
         if (tool === 'Agent') {
           if (name === 'PreToolUse') this.recordPending(m, e, agentId);
           else this.linkFromPostToolUse(s, m, e, now, out);
@@ -491,6 +527,11 @@ export class OfficeStore {
           const a = this.ensureAgent(s, m, agentId, now, out, { type: str(e.agent_type) });
           if (m.needsYou && m.needsYouBy === agentId) transitionBoss(s, m, 'answered');
           m.openTools = m.openTools.filter((t) => t.agent !== agentId);
+          m.lastCalls?.delete(agentId);
+          if (a) {
+            delete a.tool;
+            delete a.looping;
+          }
           if (a && transitionAgent(a, 'stop', now, this.stuckMs) === 'handoff') {
             out.push({ kind: 'handoff', sessionId: sid, agentId, toId: a.parentId ?? 'boss' });
           }
@@ -498,6 +539,9 @@ export class OfficeStore {
         break;
       case 'Stop':
         m.openTools = m.openTools.filter((t) => t.agent !== null);
+        m.lastCalls?.delete('');
+        delete s.boss.tool;
+        delete s.boss.looping;
         transitionBoss(s, m, 'stop');
         this.adoptBackgroundTasks(s, m, e, now, out);
         break;
@@ -594,14 +638,37 @@ export class OfficeStore {
     return true;
   }
 
-  private trackOpenTool(m: SessionMeta, name: string, toolUseId: string | undefined, agent: string | null): void {
+  private trackOpenTool(m: SessionMeta, name: string, toolUseId: string | undefined, agent: string | null, tool?: string, now?: number): void {
     if (name === 'PreToolUse') {
-      m.openTools.push({ id: toolUseId, agent });
+      m.openTools.push({ id: toolUseId, agent, ...(tool ? { name: tool } : {}), ...(now !== undefined ? { at: now } : {}) });
       if (m.openTools.length > MAX_OPEN_TOOLS) m.openTools = m.openTools.slice(-MAX_OPEN_TOOLS);
       return;
     }
     const i = toolUseId ? m.openTools.findIndex((t) => t.id === toolUseId) : m.openTools.findIndex((t) => t.agent === agent);
     if (i >= 0) m.openTools.splice(i, 1);
+  }
+
+  /** Mirrors the agent's (or the main agent's) oldest open tool call into the snapshot as `tool`. */
+  private syncOpenTool(s: Session, m: SessionMeta, agent: string | null): void {
+    const holder = agent === null ? s.boss : s.agents[agent];
+    if (!holder) return;
+    const open = m.openTools.find((t) => t.agent === agent && t.name && t.at !== undefined && !POLLING_TOOLS.has(t.name) && !DELEGATING_TOOLS.has(t.name));
+    if (open) holder.tool = { name: open.name!, since: open.at! };
+    else delete holder.tool;
+  }
+
+  /** Counts identical tool calls in a row per agent; LOOP_AT or more flags `looping`, any other call clears it. */
+  private trackRepeats(s: Session, m: SessionMeta, agent: string | null, tool: string, input: unknown): void {
+    const holder = agent === null ? s.boss : s.agents[agent];
+    if (!holder || POLLING_TOOLS.has(tool)) return;
+    const calls = (m.lastCalls ??= new Map());
+    const key = agent ?? '';
+    const sig = callSig(tool, input);
+    const prev = calls.get(key);
+    const count = prev && prev.sig === sig ? prev.count + 1 : 1;
+    calls.set(key, { sig, tool, count });
+    if (count >= LOOP_AT) holder.looping = { tool, count };
+    else delete holder.looping;
   }
 
   /**

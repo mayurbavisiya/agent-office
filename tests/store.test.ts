@@ -321,19 +321,21 @@ describe('OfficeStore: subagents', () => {
     const s = new OfficeStore();
     s.applyHook(ev({ hook_event_name: 'SubagentStart', agent_id: 'A', agent_type: 'Explore' }), 0);
     s.applyHook(ev({ hook_event_name: 'PreToolUse', agent_id: 'A', tool_name: 'Bash', tool_use_id: 'b1' }), 1_000);
+    s.applyHook(ev({ hook_event_name: 'PostToolUse', agent_id: 'A', tool_name: 'Bash', tool_use_id: 'b1' }), 1_000);
     const status = () => s.snapshot().sessions.S1.agents.A.status;
     s.tick(1_000 + 179_999);
     expect(status()).toBe('working');
     expect(s.tick(1_000 + 180_000)).toEqual([]);
     expect(status()).toBe('quiet');
 
-    s.applyHook(ev({ hook_event_name: 'PostToolUse', agent_id: 'A', tool_name: 'Bash', tool_use_id: 'b1' }), 200_000);
+    s.applyHook(ev({ hook_event_name: 'PostToolUse', agent_id: 'A', tool_name: 'Bash', tool_use_id: 'b0' }), 200_000);
     expect(status()).toBe('working');
 
     s.tick(200_000 + 180_000);
     expect(status()).toBe('quiet');
     s.applyHook(ev({ hook_event_name: 'PreToolUse', agent_id: 'A', tool_name: 'Read', tool_use_id: 'r1' }), 400_000);
     expect(status()).toBe('working');
+    s.applyHook(ev({ hook_event_name: 'PostToolUse', agent_id: 'A', tool_name: 'Read', tool_use_id: 'r1' }), 400_000);
 
     s.tick(400_000 + 180_000);
     expect(status()).toBe('quiet');

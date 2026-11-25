@@ -5,7 +5,7 @@ export type Mood = 'happy' | 'focus' | 'worried' | 'sleepy';
 export type Pose = 'type' | 'scratch' | 'carry' | 'wave' | 'walk' | 'raise_hand' | 'stand';
 export type Screen = 'code' | 'err';
 /** Status overlays drawn around a character. */
-export type Fx = 'none' | 'stuck' | 'zzz' | 'alert' | 'tap';
+export type Fx = 'none' | 'stuck' | 'zzz' | 'alert' | 'tap' | 'loop';
 
 export type Look = { color: string };
 export type StatusLook = { pose: Pose; mood: Mood; screen: Screen; fx: Fx; dim: boolean };
@@ -77,9 +77,14 @@ export function poseClass(look: StatusLook, isBoss: boolean): PoseClass {
   return 'pose-idle';
 }
 
-/** `waiting`: the agent is blocked on the person (its permission prompt or question is open). */
-export function agentLook(status: AgentStatus, waiting = false): StatusLook {
-  if (waiting && status !== 'handing_off' && status !== 'gone') return { pose: 'raise_hand', mood: 'worried', screen: 'code', fx: 'alert', dim: false };
+/**
+ * `waiting`: the agent is blocked on the person (its permission prompt or question is open).
+ * `looping`: it keeps making the same tool call. Waiting wins: the person can unblock that one.
+ */
+export function agentLook(status: AgentStatus, waiting = false, looping = false): StatusLook {
+  const present = status !== 'handing_off' && status !== 'gone';
+  if (waiting && present) return { pose: 'raise_hand', mood: 'worried', screen: 'code', fx: 'alert', dim: false };
+  if (looping && present) return { pose: 'type', mood: 'worried', screen: 'err', fx: 'loop', dim: false };
   switch (status) {
     case 'quiet':
       return { pose: 'scratch', mood: 'worried', screen: 'err', fx: 'stuck', dim: false };
@@ -118,6 +123,24 @@ export function truncate(text: string | undefined, max: number): string {
 /** Tokens in the agent's memory right now (the headline number), or undefined before its first API call. */
 export function liveTokens(s: AgentStats): number | undefined {
   return typeof s.contextTokens === 'number' && Number.isFinite(s.contextTokens) ? s.contextTokens : undefined;
+}
+
+/** What a name tag says about an agent's tool calls, or undefined: a loop, or a call running for a while. */
+export const RUNNING_AFTER_MS = 30_000;
+export function toolNote(o: { tool?: { name: string; since: number }; looping?: { tool: string; count: number } }, now: number): { text: string; since?: number; kind: 'looping' | 'running' } | undefined {
+  if (o.looping) return { text: `↻ looping? ${o.looping.tool} ×${o.looping.count}`, kind: 'looping' };
+  if (o.tool && now - o.tool.since >= RUNNING_AFTER_MS) return { text: `⏳ running ${o.tool.name} · {t}`, since: o.tool.since, kind: 'running' };
+  return undefined;
+}
+
+/** Which characters have a "running" note right now ("sid/agent" keys): when this changes, redraw. */
+export function runningKey(state: { sessions: Record<string, { id: string; boss: { tool?: { since: number } }; agents: Record<string, { id: string; tool?: { since: number } }> }> } | undefined, now: number): string {
+  const keys: string[] = [];
+  for (const s of Object.values(state?.sessions ?? {})) {
+    if (s.boss.tool && now - s.boss.tool.since >= RUNNING_AFTER_MS) keys.push(`${s.id}/boss`);
+    for (const a of Object.values(s.agents)) if (a.tool && now - a.tool.since >= RUNNING_AFTER_MS) keys.push(`${s.id}/${a.id}`);
+  }
+  return keys.sort().join(' ');
 }
 
 /** "m:ss" for a duration in ms. */

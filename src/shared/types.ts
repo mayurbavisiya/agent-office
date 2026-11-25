@@ -63,6 +63,11 @@ export type AgentStats = {
   seenMessageIds?: string[];
 };
 
+/** The tool call an agent is in the middle of: started, not yet returned. A long one is "running", not stuck. */
+export type OpenTool = { name: string; since: number };
+/** The same tool call (same tool, same input) made `count` times in a row: maybe looping. */
+export type Looping = { tool: string; count: number };
+
 export type AgentStatus = 'spawning' | 'working' | 'quiet' | 'handing_off' | 'gone';
 export type BossStatus = 'working' | 'delegating' | 'waiting_on_team' | 'idle' | 'needs_you';
 
@@ -78,6 +83,8 @@ export type Agent = {
   status: AgentStatus;
   /** set while this agent is blocked on the person (its permission prompt or question is open); never counts as stuck */
   waitingOnYou?: true;
+  tool?: OpenTool;
+  looping?: Looping;
   startedAt: number;
   endedAt?: number;
   stats: AgentStats;
@@ -94,7 +101,7 @@ export type Session = {
   name?: string;
   branch?: string;
   status: 'active' | 'ended';
-  boss: { status: BossStatus; startedAt: number; stats: AgentStats };
+  boss: { status: BossStatus; startedAt: number; stats: AgentStats; tool?: OpenTool; looping?: Looping };
   agents: Record<string, Agent>;
   lastActivity: number;
   /** floor order key (ms): set when the room is created, carried over on a /clear takeover so the room keeps its slot */

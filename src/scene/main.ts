@@ -5,7 +5,7 @@ import { tickTimers } from './characters.js';
 import { InfoPanel } from './panel.js';
 import { setTok } from './tokTicker.js';
 import { hasUsage } from './panel.js';
-import { liveTokens } from './looks.js';
+import { liveTokens, runningKey } from './looks.js';
 import { officeTitle, waitingOnYou, workingCount } from '../shared/counts.js';
 import { bossLook, humanLook, looksFor, poseClass } from './looks.js';
 import { renderCharacter } from './characters.js';
@@ -274,7 +274,14 @@ new ResizeObserver(() => {
   cancelAnimationFrame(pending);
   pending = requestAnimationFrame(draw);
 }).observe(viewport);
+let running = '';
 setInterval(() => {
+  // a tool call just crossed the "running" mark: no event arrives for that, so redraw here
+  const r = runningKey(floor.state, Date.now());
+  if (r !== running) {
+    running = r;
+    draw();
+  }
   tickTimers(layer);
   refreshTags();
   panel.refresh(floor.state);

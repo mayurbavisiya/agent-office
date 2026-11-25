@@ -41,6 +41,7 @@ describe('a subagent blocked on a permission prompt', () => {
 
   it('a subagent already gone quiet that then asks is waiting, not stuck', () => {
     const s = withHelper();
+    s.applyHook(ev({ hook_event_name: 'PostToolUse', agent_id: 'A1', tool_name: 'Read', tool_use_id: 't1' }), 31);
     s.tick(4 * MIN);
     expect(agent(s).status).toBe('quiet');
     s.applyHook(ev({ hook_event_name: 'Notification', agent_id: 'A1', notification_type: 'permission_prompt', message: 'Claude needs your permission' }), 4 * MIN + 1);

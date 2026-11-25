@@ -3,7 +3,7 @@
 import { needsYou } from '../shared/counts.js';
 import type { Agent, AgentStats, Session } from '../shared/types.js';
 import { HEAD_TOP, roomLayout, SIGN_H, signText, TAG_H, type Rect, type RoomLayout } from './layout.js';
-import { agentLook, bossLook, humanLook, looksFor, poseClass, liveTokens, truncate } from './looks.js';
+import { agentLook, bossLook, humanLook, looksFor, poseClass, liveTokens, toolNote, truncate } from './looks.js';
 import { formatTokens, hasUsage } from './panel.js';
 import { renderChair, renderCharacter, renderDesk, renderVisitorChair, VISITOR_X, setDeskScreen, svgEl, updateCharacter, type CharacterOpts } from './characters.js';
 
@@ -230,7 +230,11 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
   const signChars = label.length + sub.length + branch.length + count.length;
   sign.querySelector('rect')!.setAttribute('width', String(Math.min(rect.w - 16, signChars * 6.4 + 18)));
 
-  const boss = bossLook(session.boss.status);
+  const now = Date.now();
+  const bossNote = session.status === 'ended' ? undefined : toolNote(session.boss, now);
+  const bossBase = bossLook(session.boss.status);
+  // a main agent repeating one call gets the loop bubble (unless it is asking the person something)
+  const boss = bossNote?.kind === 'looping' && session.boss.status !== 'needs_you' && session.boss.status !== 'idle' ? { ...bossBase, mood: 'worried' as const, fx: 'loop' as const } : bossBase;
   const ended = session.status === 'ended';
   g.classList.toggle('room--dim', boss.dim || ended);
   g.classList.toggle('room--crowded', l.crowded);
@@ -258,20 +262,27 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
       pose: poseClass(boss, true),
       fx: boss.fx,
       name: 'Main agent',
-      task: session.boss.status.replace(/_/g, ' '),
+      task: bossNote && session.boss.status !== 'idle' && session.boss.status !== 'needs_you' ? bossNote.text : session.boss.status.replace(/_/g, ' '),
+      ...(bossNote?.since !== undefined ? { taskSince: bossNote.since } : {}),
       tokens: tokText(session.boss.stats),
       scale: l.bossScale,
     },
     l.boss.x,
     l.boss.y,
-  ).classList.add('boss');
+  );
+  const bossEl = people.querySelector<SVGGElement>(':scope > [data-agent-id="boss"]')!;
+  bossEl.classList.add('boss');
+  const bossNoted = session.boss.status !== 'idle' && session.boss.status !== 'needs_you' ? bossNote?.kind : undefined;
+  bossEl.classList.toggle('looping', bossNoted === 'looping');
+  bossEl.classList.toggle('running', bossNoted === 'running');
 
   // agents
   for (const a of visible) {
     const seat = l.seats[a.id];
     keep.add(a.id);
     const look = looksFor(a.type);
-    const st = agentLook(a.status, !!a.waitingOnYou);
+    const note = toolNote(a, now);
+    const st = agentLook(a.status, !!a.waitingOnYou, !!a.looping);
     placeDesk(desks, a.id, seat.x, seat.y, l.scale, st.screen, sid);
     const c = placeCharacter(
       people,
@@ -285,7 +296,8 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
         fx: st.fx,
         since: a.stats.lastActivity,
         name: a.name ?? a.type,
-        task: a.waitingOnYou ? 'waiting on you' : truncate(a.task, l.taskChars),
+        task: a.waitingOnYou ? 'waiting on you' : note ? note.text : truncate(a.task, l.taskChars),
+        ...(note?.since !== undefined && !a.waitingOnYou ? { taskSince: note.since } : {}),
         tokens: tokText(a.stats),
         scale: l.scale,
       },
@@ -294,6 +306,8 @@ export function updateRoom(g: SVGGElement, session: Session, rect: Rect): RoomLa
     );
     c.dataset.status = a.status;
     c.classList.toggle('waiting', !!a.waitingOnYou);
+    c.classList.toggle('looping', !a.waitingOnYou && note?.kind === 'looping');
+    c.classList.toggle('running', !a.waitingOnYou && note?.kind === 'running');
     c.dataset.depth = String(seat.depth);
     if (a.parentId) c.dataset.parentId = a.parentId;
     else delete c.dataset.parentId;

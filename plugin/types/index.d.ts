@@ -16,6 +16,8 @@ export type AgentOfficeAgent = {
   task?: string
   status: 'spawning' | 'working' | 'quiet' | 'handing_off' | 'gone'
   waitingOnYou?: true
+  tool?: { name: string; since: number }
+  looping?: { tool: string; count: number }
   startedAt: number
   endedAt?: number
   stats: AgentOfficeStats

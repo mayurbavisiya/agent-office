@@ -36,6 +36,8 @@ export type CharacterOpts = {
   /** token counter text, e.g. "⚡ 12.3k tok" */
   tokens: string;
   task?: string;
+  /** epoch ms: the task text's "{t}" counts up from here (e.g. "running Bash · 4:12") */
+  taskSince?: number;
   /** body scale (name tag text stays at a fixed pixel size) */
   scale?: number;
   fx?: Fx;
@@ -178,6 +180,8 @@ function fxMarkup(fx: Fx, s: number): string {
         <text class="zz" font-size="10">z</text><text class="zz" style="animation-delay:.8s" x="5" y="-5" font-size="12">z</text><text class="zz" style="animation-delay:1.6s" x="10" y="-11" font-size="14">z</text></g>`;
     case 'tap':
       return `<g transform="translate(${r1(-30 * s - 8)},${r1(top + 4)})"><g class="bubbleq"><rect x="-11" y="-8" width="22" height="15" rx="7" fill="#fff" stroke="#94a3b8"/><text y="3.5" font-size="10" font-weight="800" fill="#475569" text-anchor="middle">…</text></g></g>`;
+    case 'loop':
+      return `<g transform="translate(${r1(-30 * s - 8)},${r1(top + 3)})"><g class="bubbleq"><circle r="9" fill="#fff" stroke="#e11d48" stroke-width="2"/><text class="loopy" y="4.5" font-size="13" font-weight="900" fill="#e11d48" text-anchor="middle">↻</text></g></g>`;
     default:
       return '';
   }
@@ -197,6 +201,8 @@ function bustFxMarkup(fx: Fx): string {
       return bubble('#dc2626', '#dc2626', '?');
     case 'tap':
       return bubble('#94a3b8', '#475569', '…');
+    case 'loop':
+      return bubble('#e11d48', '#e11d48', '↻');
     default:
       return '';
   }
@@ -347,7 +353,15 @@ export function updateCharacter(g: SVGGElement, o: CharacterOpts): void {
   pill.setAttribute('stroke', o.color);
   name.setAttribute('y', String(r1(a - 25)));
   const t = o.task ?? '';
-  if (task.textContent !== t) task.textContent = t;
+  if (o.taskSince !== undefined && t.includes('{t}')) {
+    task.dataset.tpl = t;
+    task.dataset.since = String(o.taskSince);
+    paintTask(task, Date.now());
+  } else {
+    delete task.dataset.tpl;
+    delete task.dataset.since;
+    if (task.textContent !== t) task.textContent = t;
+  }
   task.setAttribute('y', String(r1(a - 13)));
   if (!tok.dataset.ticking) writeTok(tok, o.tokens); // main.ts counts it up between snapshots
   tok.setAttribute('y', String(r1(a - 4)));
@@ -359,9 +373,16 @@ function paintTimer(t: SVGTextElement, now: number): void {
   if (t.textContent !== txt) t.textContent = txt;
 }
 
-/** Refreshes every quiet timer under root (call once a second). */
+function paintTask(t: SVGTextElement, now: number): void {
+  const since = Number(t.dataset.since);
+  const txt = (t.dataset.tpl ?? '').replace('{t}', formatTimer(now - (Number.isFinite(since) ? since : now)));
+  if (t.textContent !== txt) t.textContent = txt;
+}
+
+/** Refreshes every quiet timer and running-tool timer under root (call once a second). */
 export function tickTimers(root: ParentNode, now = Date.now()): void {
   root.querySelectorAll<SVGTextElement>('.timer').forEach((t) => paintTimer(t, now));
+  root.querySelectorAll<SVGTextElement>('.task[data-tpl]').forEach((t) => paintTask(t, now));
 }
 
 // Furniture in body units, seat-local: the seated character's feet are at (0, 0) and it faces +x.

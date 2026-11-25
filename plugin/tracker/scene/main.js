@@ -48,8 +48,10 @@ function poseClass(look, isBoss) {
   if (isBoss && look.fx === "tap") return "pose-lean";
   return "pose-idle";
 }
-function agentLook(status, waiting = false) {
-  if (waiting && status !== "handing_off" && status !== "gone") return { pose: "raise_hand", mood: "worried", screen: "code", fx: "alert", dim: false };
+function agentLook(status, waiting = false, looping = false) {
+  const present = status !== "handing_off" && status !== "gone";
+  if (waiting && present) return { pose: "raise_hand", mood: "worried", screen: "code", fx: "alert", dim: false };
+  if (looping && present) return { pose: "type", mood: "worried", screen: "err", fx: "loop", dim: false };
   switch (status) {
     case "quiet":
       return { pose: "scratch", mood: "worried", screen: "err", fx: "stuck", dim: false };
@@ -83,6 +85,20 @@ function truncate(text, max) {
 }
 function liveTokens(s) {
   return typeof s.contextTokens === "number" && Number.isFinite(s.contextTokens) ? s.contextTokens : void 0;
+}
+var RUNNING_AFTER_MS = 3e4;
+function toolNote(o, now) {
+  if (o.looping) return { text: `\u21BB looping? ${o.looping.tool} \xD7${o.looping.count}`, kind: "looping" };
+  if (o.tool && now - o.tool.since >= RUNNING_AFTER_MS) return { text: `\u23F3 running ${o.tool.name} \xB7 {t}`, since: o.tool.since, kind: "running" };
+  return void 0;
+}
+function runningKey(state, now) {
+  const keys = [];
+  for (const s of Object.values(state?.sessions ?? {})) {
+    if (s.boss.tool && now - s.boss.tool.since >= RUNNING_AFTER_MS) keys.push(`${s.id}/boss`);
+    for (const a of Object.values(s.agents)) if (a.tool && now - a.tool.since >= RUNNING_AFTER_MS) keys.push(`${s.id}/${a.id}`);
+  }
+  return keys.sort().join(" ");
 }
 function formatTimer(ms) {
   const s = Math.max(0, Math.floor(ms / 1e3));
@@ -393,10 +409,20 @@ function panelModel(target, now) {
   const endedAt = isBoss ? session.status === "ended" ? session.lastActivity : void 0 : agent.endedAt;
   let statusLabel;
   let statusColor;
-  if (isBoss) [statusLabel, statusColor] = BOSS_STATUS[session.boss.status] ?? [String(session.boss.status), "#64748b"];
-  else {
+  const toolLine = (o) => {
+    const n = toolNote(o, now);
+    if (!n) return void 0;
+    return n.kind === "looping" ? [`Looping? Same ${o.looping.tool} call ${o.looping.count}\xD7 in a row`, "#e11d48"] : [`Running ${o.tool.name} \xB7 ${formatDuration(now - o.tool.since)} (busy, not stuck)`, "#2563eb"];
+  };
+  if (isBoss) {
+    [statusLabel, statusColor] = BOSS_STATUS[session.boss.status] ?? [String(session.boss.status), "#64748b"];
+    const line = session.boss.status !== "idle" && session.boss.status !== "needs_you" && session.status !== "ended" ? toolLine(session.boss) : void 0;
+    if (line) [statusLabel, statusColor] = line;
+  } else {
     [statusLabel, statusColor] = AGENT_STATUS[agent.status] ?? [String(agent.status), "#64748b"];
     if (agent.status === "quiet") statusLabel += ` \xB7 ${formatDuration(now - st.lastActivity)} quiet`;
+    const line = agent.status !== "handing_off" && agent.status !== "gone" ? toolLine(agent) : void 0;
+    if (line) [statusLabel, statusColor] = line;
     if (agent.waitingOnYou && agent.status !== "handing_off" && agent.status !== "gone") [statusLabel, statusColor] = ["Waiting on you \xB7 its prompt is open", "#d97706"];
   }
   const noUsage = !hasUsage(st);
@@ -408,7 +434,7 @@ function panelModel(target, now) {
   const type = isBoss ? "main" : agent.type;
   const agents = Object.values(session.agents);
   const spawned = Math.max(agents.length, session.boss.stats.tools.Agent ?? 0);
-  const running = agents.filter((a) => a.status !== "gone" && a.status !== "handing_off" && a.status !== "quiet").length;
+  const running2 = agents.filter((a) => a.status !== "gone" && a.status !== "handing_off" && a.status !== "quiet").length;
   const stuck = agents.filter((a) => a.status === "quiet").length;
   return {
     name: isBoss ? "Main agent" : agent.name ?? agent.type,
@@ -430,7 +456,7 @@ function panelModel(target, now) {
     toolTotal: tools.reduce((n, t) => n + t.count, 0),
     files: st.files,
     recent: st.recent,
-    team: isBoss ? { spawned, done: Math.max(0, spawned - running - stuck), stuck } : void 0
+    team: isBoss ? { spawned, done: Math.max(0, spawned - running2 - stuck), stuck } : void 0
   };
 }
 function el(tag, cls, text, parent) {
@@ -739,6 +765,8 @@ function fxMarkup(fx, s) {
         <text class="zz" font-size="10">z</text><text class="zz" style="animation-delay:.8s" x="5" y="-5" font-size="12">z</text><text class="zz" style="animation-delay:1.6s" x="10" y="-11" font-size="14">z</text></g>`;
     case "tap":
       return `<g transform="translate(${r1(-30 * s - 8)},${r1(top + 4)})"><g class="bubbleq"><rect x="-11" y="-8" width="22" height="15" rx="7" fill="#fff" stroke="#94a3b8"/><text y="3.5" font-size="10" font-weight="800" fill="#475569" text-anchor="middle">\u2026</text></g></g>`;
+    case "loop":
+      return `<g transform="translate(${r1(-30 * s - 8)},${r1(top + 3)})"><g class="bubbleq"><circle r="9" fill="#fff" stroke="#e11d48" stroke-width="2"/><text class="loopy" y="4.5" font-size="13" font-weight="900" fill="#e11d48" text-anchor="middle">\u21BB</text></g></g>`;
     default:
       return "";
   }
@@ -752,6 +780,8 @@ function bustFxMarkup(fx) {
       return bubble("#dc2626", "#dc2626", "?");
     case "tap":
       return bubble("#94a3b8", "#475569", "\u2026");
+    case "loop":
+      return bubble("#e11d48", "#e11d48", "\u21BB");
     default:
       return "";
   }
@@ -848,7 +878,15 @@ function updateCharacter(g, o) {
   pill2.setAttribute("stroke", o.color);
   name.setAttribute("y", String(r1(a - 25)));
   const t = o.task ?? "";
-  if (task.textContent !== t) task.textContent = t;
+  if (o.taskSince !== void 0 && t.includes("{t}")) {
+    task.dataset.tpl = t;
+    task.dataset.since = String(o.taskSince);
+    paintTask(task, Date.now());
+  } else {
+    delete task.dataset.tpl;
+    delete task.dataset.since;
+    if (task.textContent !== t) task.textContent = t;
+  }
   task.setAttribute("y", String(r1(a - 13)));
   if (!tok.dataset.ticking) writeTok(tok, o.tokens);
   tok.setAttribute("y", String(r1(a - 4)));
@@ -858,8 +896,14 @@ function paintTimer(t, now) {
   const txt = "\u23F1 " + formatTimer(now - (Number.isFinite(since) ? since : now));
   if (t.textContent !== txt) t.textContent = txt;
 }
+function paintTask(t, now) {
+  const since = Number(t.dataset.since);
+  const txt = (t.dataset.tpl ?? "").replace("{t}", formatTimer(now - (Number.isFinite(since) ? since : now)));
+  if (t.textContent !== txt) t.textContent = txt;
+}
 function tickTimers(root, now = Date.now()) {
   root.querySelectorAll(".timer").forEach((t) => paintTimer(t, now));
+  root.querySelectorAll(".task[data-tpl]").forEach((t) => paintTask(t, now));
 }
 var SEAT_Y = -HALF_LEG;
 var DESK_X = 16;
@@ -1134,7 +1178,10 @@ function updateRoom(g, session, rect) {
   setT("count", count);
   const signChars = label.length + sub.length + branch.length + count.length;
   sign.querySelector("rect").setAttribute("width", String(Math.min(rect.w - 16, signChars * 6.4 + 18)));
-  const boss = bossLook(session.boss.status);
+  const now = Date.now();
+  const bossNote = session.status === "ended" ? void 0 : toolNote(session.boss, now);
+  const bossBase = bossLook(session.boss.status);
+  const boss = bossNote?.kind === "looping" && session.boss.status !== "needs_you" && session.boss.status !== "idle" ? { ...bossBase, mood: "worried", fx: "loop" } : bossBase;
   const ended = session.status === "ended";
   g.classList.toggle("room--dim", boss.dim || ended);
   g.classList.toggle("room--crowded", l.crowded);
@@ -1158,18 +1205,25 @@ function updateRoom(g, session, rect) {
       pose: poseClass(boss, true),
       fx: boss.fx,
       name: "Main agent",
-      task: session.boss.status.replace(/_/g, " "),
+      task: bossNote && session.boss.status !== "idle" && session.boss.status !== "needs_you" ? bossNote.text : session.boss.status.replace(/_/g, " "),
+      ...bossNote?.since !== void 0 ? { taskSince: bossNote.since } : {},
       tokens: tokText(session.boss.stats),
       scale: l.bossScale
     },
     l.boss.x,
     l.boss.y
-  ).classList.add("boss");
+  );
+  const bossEl = people.querySelector(':scope > [data-agent-id="boss"]');
+  bossEl.classList.add("boss");
+  const bossNoted = session.boss.status !== "idle" && session.boss.status !== "needs_you" ? bossNote?.kind : void 0;
+  bossEl.classList.toggle("looping", bossNoted === "looping");
+  bossEl.classList.toggle("running", bossNoted === "running");
   for (const a of visible) {
     const seat = l.seats[a.id];
     keep.add(a.id);
     const look = looksFor(a.type);
-    const st = agentLook(a.status, !!a.waitingOnYou);
+    const note = toolNote(a, now);
+    const st = agentLook(a.status, !!a.waitingOnYou, !!a.looping);
     placeDesk(desks, a.id, seat.x, seat.y, l.scale, st.screen, sid);
     const c = placeCharacter(
       people,
@@ -1183,7 +1237,8 @@ function updateRoom(g, session, rect) {
         fx: st.fx,
         since: a.stats.lastActivity,
         name: a.name ?? a.type,
-        task: a.waitingOnYou ? "waiting on you" : truncate(a.task, l.taskChars),
+        task: a.waitingOnYou ? "waiting on you" : note ? note.text : truncate(a.task, l.taskChars),
+        ...note?.since !== void 0 && !a.waitingOnYou ? { taskSince: note.since } : {},
         tokens: tokText(a.stats),
         scale: l.scale
       },
@@ -1192,6 +1247,8 @@ function updateRoom(g, session, rect) {
     );
     c.dataset.status = a.status;
     c.classList.toggle("waiting", !!a.waitingOnYou);
+    c.classList.toggle("looping", !a.waitingOnYou && note?.kind === "looping");
+    c.classList.toggle("running", !a.waitingOnYou && note?.kind === "running");
     c.dataset.depth = String(seat.depth);
     if (a.parentId) c.dataset.parentId = a.parentId;
     else delete c.dataset.parentId;
@@ -2294,7 +2351,13 @@ new ResizeObserver(() => {
   cancelAnimationFrame(pending);
   pending = requestAnimationFrame(draw);
 }).observe(viewport);
+var running = "";
 setInterval(() => {
+  const r = runningKey(floor.state, Date.now());
+  if (r !== running) {
+    running = r;
+    draw();
+  }
   tickTimers(layer);
   refreshTags();
   panel.refresh(floor.state);

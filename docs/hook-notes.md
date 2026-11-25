@@ -173,3 +173,7 @@ every field as optional and tolerate garbage.
 ## PermissionRequest and Notification (verified on Claude Code 2.1.332)
 
 A subagent's permission prompt sends `PermissionRequest` first, with that subagent's `agent_id`, `agent_type` and `tool_name`, then a `Notification` (`notification_type: "permission_prompt"`) with **no** `agent_id`. So the tracker takes the asker from `PermissionRequest` and does not let the unnamed `Notification` replace it. The plugin registers `PermissionRequest` as an async command hook that prints nothing, so it never decides the prompt: the dialog shows as usual. A main-agent question (AskUserQuestion) raises a `Notification` too, and the room goes to "needs you" a few seconds after the question appears.
+
+## Busy, stuck or looping
+
+Each `PreToolUse` opens a call and its `PostToolUse` (or `PostToolUseFailure`, registered for this) closes it, matched by `tool_use_id`. An agent with a call still open is busy: it is not flagged "maybe stuck" until that one call has been open for 20 minutes. Calls that only wait on another agent (`Agent`, `Task`) and polling tools are not shown as "running". Loops: the tracker hashes `tool_name` + `tool_input` per agent; the same hash 3 times in a row sets `looping`, any other call clears it.

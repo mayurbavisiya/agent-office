@@ -251,3 +251,6 @@ html.shell #usage-details { top: calc(18px + var(--usage-h)); }
 
 /* a subagent blocked on the person: amber task line on its name tag */
 .char.waiting .task { fill: #b45309; font-weight: 700; }
+/* repeating the same tool call: maybe looping; a long tool call: busy, not stuck */
+.char.looping .task { fill: #e11d48; font-weight: 700; }
+.char.running .task { fill: #2563eb; font-weight: 600; }
