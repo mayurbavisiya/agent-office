@@ -96,6 +96,23 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 .char.carrying .paper, .char.giving .paper { opacity: 1; }
 .char.cheer .arm.front, .char.pose-wave:not(.walking) .arm.front { transform: rotate(-135deg); animation: rig-wave .4s infinite ease-in-out; }
 
+/* the finisher's victory dance by the receiver (handoff celebrate): bounce, sway, arms pumping
+   in turn, little kicks */
+@keyframes dance-bounce { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-3px) } }
+@keyframes dance-sway { 0%, 100% { transform: rotate(-9deg) } 50% { transform: rotate(9deg) } }
+@keyframes dance-armA { 0%, 100% { transform: rotate(-160deg) } 50% { transform: rotate(-40deg) } }
+@keyframes dance-armB { 0%, 100% { transform: rotate(-40deg) } 50% { transform: rotate(-160deg) } }
+@keyframes dance-kickA { 0%, 100% { transform: rotate(0deg) } 50% { transform: rotate(-22deg) } }
+@keyframes dance-kickB { 0%, 100% { transform: rotate(-22deg) } 50% { transform: rotate(0deg) } }
+@keyframes dance-knee { 0%, 100% { transform: rotate(0deg) } 50% { transform: rotate(28deg) } }
+.char.dancing .body { animation: dance-bounce .45s infinite ease-in-out; }
+.char.dancing .upper { animation: dance-sway .9s infinite ease-in-out; }
+.char.dancing .arm.front { animation: dance-armA .9s infinite ease-in-out; }
+.char.dancing .arm.back { animation: dance-armB .9s infinite ease-in-out; }
+.char.dancing .leg.front { animation: dance-kickA .9s infinite ease-in-out; }
+.char.dancing .leg.back { animation: dance-kickB .9s infinite ease-in-out; }
+.char.dancing .leg .shin { animation: dance-knee .45s infinite ease-in-out; }
+
 /* seated: hips on the chair, thighs forward, shins down; the tag and overlays drop with the head */
 .char.sitting .body { transform: translateY(var(--L)); animation: rig-breathe 2.4s infinite ease-in-out; }
 .char.sitting > .anim > .tag, .char.sitting > .anim > .fx { transform: translateY(var(--L)); }

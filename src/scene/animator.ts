@@ -1,5 +1,5 @@
 // Life-cycle animations: spawn (door, sparkle, walk to desk), handoff (walk to boss or parent,
-// paper, "Got it, thanks!", confetti), exit (walk out the door), shift change and room fades.
+// paper, "Got it, thanks!", confetti, the finisher's victory dance), exit (walk out the door), shift change and room fades.
 // planAnimations is pure (tested under node); the runner is browser-only (Web Animations API).
 //
 // Status poses (quiet → scratch/sweat/red timer, needs_you → raised hand + "!", idle → zzz,
@@ -53,7 +53,7 @@ export const DURATIONS: Record<AnimKind, number> = {
   walk_to_desk: 2000,
   walk_to: 2000,
   give: 800,
-  celebrate: 1200,
+  celebrate: 1800,
   exit_door: 2000,
   shift_change: 2000,
   fade_in_room: 600,
@@ -75,9 +75,12 @@ export function stepClasses(kind: AnimKind): { add: string[]; remove: string[] }
     case 'give':
       return { add: ['giving'], remove: ['walking', 'carrying'] };
     case 'exit_door':
-      return { add: ['walking'], remove: ['giving', 'carrying', 'sitting'] };
+      return { add: ['walking'], remove: ['giving', 'carrying', 'sitting', 'dancing'] };
+    case 'celebrate':
+      // the finisher does a little victory dance while the receiver cheers
+      return { add: ['dancing'], remove: ['giving'] };
     default:
-      // celebrate: nothing on the walker (the receiver cheers); room fades have no walker
+      // room fades have no walker
       return { add: [], remove: [] };
   }
 }
@@ -524,6 +527,8 @@ async function play(step: AnimStep, svg: SVGSVGElement, q: Queue): Promise<boole
       return true;
     }
     case 'celebrate': {
+      const d = stepClasses('celebrate');
+      applyDelta(c, d.add, d.remove);
       const target = receiver(room, layout, step.targetId);
       if (!target) {
         await wait(ms);

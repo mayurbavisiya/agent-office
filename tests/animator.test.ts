@@ -17,7 +17,7 @@ const state = (...sessions: Session[]): OfficeState => ({ sessions: Object.fromE
 
 describe('planAnimations', () => {
   it('uses the brief durations', () => {
-    expect(DURATIONS).toMatchObject({ enter_door: 1200, walk_to_desk: 2000, walk_to: 2000, give: 800, celebrate: 1200, exit_door: 2000 });
+    expect(DURATIONS).toMatchObject({ enter_door: 1200, walk_to_desk: 2000, walk_to: 2000, give: 800, celebrate: 1800, exit_door: 2000 });
   });
 
   it('spawned → [enter_door 1200, walk_to_desk 2000]', () => {
@@ -28,12 +28,12 @@ describe('planAnimations', () => {
     ]);
   });
 
-  it('handoff to boss → [walk_to boss 2000, give 800, celebrate(boss) 1200], then left → [exit_door 2000]', () => {
+  it('handoff to boss → [walk_to boss 2000, give 800, celebrate(boss) 1800], then left → [exit_door 2000]', () => {
     const st = state(session('s1', [agent('a1', null, 'handing_off')]));
     expect(planAnimations([{ kind: 'handoff', sessionId: 's1', agentId: 'a1', toId: 'boss' }], st)).toEqual([
       { agentId: 'a1', sessionId: 's1', kind: 'walk_to', targetId: 'boss', durationMs: 2000 },
       { agentId: 'a1', sessionId: 's1', kind: 'give', targetId: 'boss', durationMs: 800 },
-      { agentId: 'a1', sessionId: 's1', kind: 'celebrate', targetId: 'boss', durationMs: 1200 },
+      { agentId: 'a1', sessionId: 's1', kind: 'celebrate', targetId: 'boss', durationMs: 1800 },
     ]);
     const gone = state(session('s1', [agent('a1', null, 'gone')]));
     expect(planAnimations([{ kind: 'left', sessionId: 's1', agentId: 'a1' }], gone)).toEqual([
@@ -143,13 +143,17 @@ describe('tween (Web Animations runner)', () => {
 describe('walk choreography', () => {
   afterEach(() => vi.useRealTimers());
 
+  it('the hand-off, dance included, ends before the tracker marks the agent gone', async () => {
+    const { HANDOFF_MS } = await import('../src/core/store.js');
+    expect(DURATIONS.walk_to + DURATIONS.give + DURATIONS.celebrate).toBeLessThan(HANDOFF_MS);
+  });
   it('stepClasses maps each walk kind', () => {
     expect(stepClasses('enter_door')).toEqual({ add: ['walking'], remove: ['sitting'] });
     expect(stepClasses('walk_to_desk')).toEqual({ add: ['walking'], remove: ['sitting'] });
     expect(stepClasses('walk_to')).toEqual({ add: ['walking', 'carrying'], remove: ['sitting'] });
     expect(stepClasses('give')).toEqual({ add: ['giving'], remove: ['walking', 'carrying'] });
-    expect(stepClasses('exit_door')).toEqual({ add: ['walking'], remove: ['giving', 'carrying', 'sitting'] });
-    expect(stepClasses('celebrate')).toEqual({ add: [], remove: [] });
+    expect(stepClasses('exit_door')).toEqual({ add: ['walking'], remove: ['giving', 'carrying', 'sitting', 'dancing'] });
+    expect(stepClasses('celebrate')).toEqual({ add: ['dancing'], remove: ['giving'] });
   });
 
   it('facing turns toward travel', () => {

@@ -53,7 +53,7 @@ export const RIG = { head: 8, torso: 21, leg: 22, arm: 19, w: 14, rx: 3 } as con
 const HALF_LEG = RIG.leg / 2;
 
 /** State classes on g.char (toggled by the animator) and the pose classes they combine with. */
-export const STATE_CLASSES = ['walking', 'sitting', 'carrying', 'giving', 'cheer'] as const;
+export const STATE_CLASSES = ['walking', 'sitting', 'carrying', 'giving', 'cheer', 'dancing'] as const;
 export const POSE_CLASSES: PoseClass[] = ['pose-type', 'pose-slump', 'pose-wave', 'pose-lean', 'pose-idle'];
 
 /**

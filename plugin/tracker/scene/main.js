@@ -635,7 +635,7 @@ function html(g, s) {
 var r1 = (n) => Math.round(n * 10) / 10;
 var RIG = { head: 8, torso: 21, leg: 22, arm: 19, w: 14, rx: 3 };
 var HALF_LEG = RIG.leg / 2;
-var STATE_CLASSES = ["walking", "sitting", "carrying", "giving", "cheer"];
+var STATE_CLASSES = ["walking", "sitting", "carrying", "giving", "cheer", "dancing"];
 var POSE_CLASSES = ["pose-type", "pose-slump", "pose-wave", "pose-lean", "pose-idle"];
 function stateClasses(pose, animPose) {
   switch (animPose) {
@@ -1285,7 +1285,7 @@ var DURATIONS = {
   walk_to_desk: 2e3,
   walk_to: 2e3,
   give: 800,
-  celebrate: 1200,
+  celebrate: 1800,
   exit_door: 2e3,
   shift_change: 2e3,
   fade_in_room: 600,
@@ -1303,7 +1303,9 @@ function stepClasses(kind) {
     case "give":
       return { add: ["giving"], remove: ["walking", "carrying"] };
     case "exit_door":
-      return { add: ["walking"], remove: ["giving", "carrying", "sitting"] };
+      return { add: ["walking"], remove: ["giving", "carrying", "sitting", "dancing"] };
+    case "celebrate":
+      return { add: ["dancing"], remove: ["giving"] };
     default:
       return { add: [], remove: [] };
   }
@@ -1656,6 +1658,8 @@ async function play(step, svg2, q) {
       return true;
     }
     case "celebrate": {
+      const d = stepClasses("celebrate");
+      applyDelta(c, d.add, d.remove);
       const target = receiver(room, layout, step.targetId);
       if (!target) {
         await wait(ms);
