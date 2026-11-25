@@ -105,6 +105,10 @@ body { font: 13px/1.4 system-ui, -apple-system, sans-serif; color: #e2e8f0; }
 @keyframes dance-kickA { 0%, 100% { transform: rotate(0deg) } 50% { transform: rotate(-22deg) } }
 @keyframes dance-kickB { 0%, 100% { transform: rotate(-22deg) } 50% { transform: rotate(0deg) } }
 @keyframes dance-knee { 0%, 100% { transform: rotate(0deg) } 50% { transform: rotate(28deg) } }
+@keyframes disco-spin { 0%, 100% { transform: scaleX(1) } 50% { transform: scaleX(-1) } }
+.disco-facets { animation: disco-spin .6s infinite linear; }
+@keyframes disco-beam { 0%, 100% { transform: rotate(-38deg) } 50% { transform: rotate(38deg) } }
+.disco-beam { animation: disco-beam 1.4s infinite ease-in-out; }
 .char.dancing .body { animation: dance-bounce .45s infinite ease-in-out; }
 .char.dancing .upper { animation: dance-sway .9s infinite ease-in-out; }
 .char.dancing .arm.front { animation: dance-armA .9s infinite ease-in-out; }

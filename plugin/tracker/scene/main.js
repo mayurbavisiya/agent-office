@@ -1572,6 +1572,52 @@ function doorTag(ctx, room, layout, label, color, ms, withSparkle) {
   const tag = pill(fx, { x: at.x - 30, y: Math.min(layout.rect.h - 8, at.y + 34) }, layout.rect.w, label, color);
   flourish(tag, [{ opacity: 0 }, { opacity: 1, offset: 0.1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }], ms, {}, tag.parentElement);
 }
+function disco(room, layout, at, ms) {
+  const fx = fxLayer(room);
+  if (fx.querySelector(":scope > .disco")) return;
+  const { w, h } = layout.rect;
+  const g = svgEl("g", { class: "disco", "pointer-events": "none" }, fx);
+  const fade = (el2, peak) => flourish(el2, [{ opacity: 0 }, { opacity: peak, offset: 0.12 }, { opacity: peak, offset: 0.85 }, { opacity: 0 }], ms, {}, el2);
+  fade(svgEl("rect", { x: 0, y: 0, width: w, height: h, fill: "#1e1b4b" }, g), 0.22);
+  const colors = ["#f43f5e", "#facc15", "#22d3ee", "#4ade80", "#a855f7", "#fb923c"];
+  for (let i = 0; i < 8; i++) {
+    const onWall = i % 3 === 2;
+    const y = onWall ? layout.wallH * (0.45 + i % 2 * 0.2) : layout.wallH + (h - layout.wallH) * (0.25 + i * 37 % 60 / 100);
+    const x0 = i * 97 % 100 / 100 * w;
+    const dx = (i % 2 ? -1 : 1) * Math.round(w * 0.35);
+    const spot = svgEl("ellipse", { cx: 0, cy: 0, rx: onWall ? 14 : 26, ry: onWall ? 14 : 9, fill: colors[i % colors.length], opacity: 0 }, g);
+    flourish(spot, [
+      { opacity: 0, transform: `translate(${Math.round(x0)}px, ${Math.round(y)}px)` },
+      { opacity: 0.65, transform: `translate(${Math.round(x0 + dx * 0.3)}px, ${Math.round(y)}px)`, offset: 0.15 },
+      { opacity: 0.3, transform: `translate(${Math.round(x0 + dx * 0.6)}px, ${Math.round(y)}px)`, offset: 0.45 },
+      { opacity: 0.65, transform: `translate(${Math.round(x0 + dx * 0.8)}px, ${Math.round(y)}px)`, offset: 0.75 },
+      { opacity: 0, transform: `translate(${Math.round(x0 + dx)}px, ${Math.round(y)}px)` }
+    ], ms, { easing: "linear" });
+  }
+  const bx = Math.round(Math.max(14, Math.min(w - 14, at.x)));
+  const R = 11;
+  const by = Math.round(Math.max(30, layout.wallH * 0.6));
+  const ball = svgEl("g", {}, g);
+  svgEl("line", { x1: bx, y1: 0, x2: bx, y2: by - R, stroke: "#94a3b8", "stroke-width": 1.2 }, ball);
+  const orb = svgEl("g", { transform: `translate(${bx},${by})` }, ball);
+  const beams = svgEl("g", { class: "disco-beams" }, orb);
+  const len = Math.round(h - by);
+  for (let i = 0; i < 4; i++) {
+    const beam = svgEl("g", { class: "disco-beam", style: `animation-delay:${-i * 0.35}s` }, beams);
+    svgEl("polygon", { points: `0,0 ${-10},${len} ${10},${len}`, fill: colors[i * 2 % colors.length], opacity: 0.22 }, beam);
+  }
+  svgEl("circle", { r: R, fill: "#e2e8f0", stroke: "#64748b", "stroke-width": 1 }, orb);
+  const facets = svgEl("g", { class: "disco-facets" }, orb);
+  for (const d of [`M ${-R} 0 H ${R}`, "M -10 -5 H 10", "M -10 5 H 10", `M 0 ${-R} V ${R}`, "M -5.5 -10 V 10", "M 5.5 -10 V 10"]) svgEl("path", { d, stroke: "#94a3b8", "stroke-width": 0.8, fill: "none" }, facets);
+  svgEl("circle", { cx: -4, cy: -4, r: 2.2, fill: "#fff" }, orb);
+  flourish(ball, [
+    { transform: `translateY(${-by - 10}px)` },
+    { transform: "translateY(0px)", offset: 0.15 },
+    { transform: "translateY(0px)", offset: 0.85 },
+    { transform: `translateY(${-by - 10}px)` }
+  ], ms, { easing: "ease-in-out" }, ball);
+  setTimeout(() => g.remove(), ms + 1500);
+}
 function confetti(room, at) {
   const fx = fxLayer(room);
   const g = svgEl("g", { transform: `translate(${Math.round(at.x)},${Math.round(at.y)})` }, fx);
@@ -1672,6 +1718,7 @@ async function play(step, svg2, q) {
       bubble.style.transformOrigin = "bottom left";
       if (!ctx.reduced) {
         confetti(room, { x: target.x + 30 * target.scale, y: target.y - 40 * target.scale });
+        disco(room, layout, { x: base.x + off.x, y: base.y + off.y }, ms);
         target.anim?.animate(
           [{ transform: "translateY(0px)" }, { transform: "translateY(-8px)", offset: 0.25 }, { transform: "translateY(0px)", offset: 0.5 }, { transform: "translateY(-5px)", offset: 0.7 }, { transform: "translateY(0px)" }],
           { duration: 700, easing: "ease-out", composite: "add" }
